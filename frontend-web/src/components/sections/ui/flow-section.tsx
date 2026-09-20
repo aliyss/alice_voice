@@ -222,13 +222,15 @@ export const FlowSection = component$(() => {
                   d: 'error',
                 },
               }}
-            />
+            />{' '}
             <Text size="micro" tone="faint">
               A route paints the block and the link it walked: green for a stage
               that answered, amber for a stage that fell back to another reader,
               and red for the stage that refused. Every block the route did not
-              reach steps back, and the value of a link of the route carries the
-              color of that link.
+              reach steps back, and the value of a link of the route steps up
+              from faint to default rather than taking the color of its link,
+              because a status color on a short machine value at 11px is hard to
+              read.
             </Text>
           </Stack>
         </ShowcaseBlock>

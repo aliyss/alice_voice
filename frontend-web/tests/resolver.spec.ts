@@ -355,23 +355,69 @@ test.describe.serial('layered router', () => {
 
       // The flow keeps the route of the sentence that was read: every
       // stage the message did not meet steps back, and every stage it met
-      // takes the tone of how it ended.
+      // takes the tone of how it ended. The links a place feeds the chain
+      // are part of the route too, so a dashed link is colored with the
+      // stage it answers.
       const refused = card.getByRole('button', { name: /No intent matched/ });
       await expect(refused).toHaveClass(/opacity-40/);
       const message = card.getByRole('button', { name: /The message/ });
       await expect(message).toHaveAttribute('data-route', 'ok');
+      const step = card.getByRole('button', { name: /Deterministic pass/ });
+      await expect(step).toHaveAttribute('data-route', 'ok');
+      await expect(
+        card.locator('[data-edge="message-deterministic"]'),
+      ).toHaveAttribute('data-route', 'ok');
       await card.getByRole('button', { name: 'Show every stage' }).click();
       await expect(refused).not.toHaveClass(/opacity-40/);
       await expect(refused).not.toHaveAttribute('data-route', /.*/);
 
-      // The list is the user's, so the test leaves it as it found it.
+      // The log of one sentence reads in two ways: the reading names what
+      // the daemon would do, and the technical log names every value it
+      // reported, each with the sentence about what it means.
+      await expect(stepPanel(page).getByText('The log of')).toBeVisible();
+      await stepPanel(page).getByRole('radio', { name: 'Debug' }).click();
+      await expect(
+        stepPanel(page).getByText('The answer', { exact: true }).first(),
+      ).toBeVisible();
+      await expect(
+        stepPanel(page).getByText('How it ended', { exact: true }).first(),
+      ).toBeVisible();
+      await stepPanel(page).getByRole('radio', { name: 'Text' }).click();
+      await expect(
+        stepPanel(page).getByText('The answer', { exact: true }),
+      ).toHaveCount(0);
+
+      // A stored sentence can be edited in place, and the edit is stored
+      // where the sentence was.
       await stepPanel(page)
-        .getByRole('button', { name: 'Remove what is the weather' })
+        .getByRole('button', { name: 'Edit what is the weather' })
+        .click();
+      await stepPanel(page)
+        .getByRole('textbox', { name: 'The sentence what is the weather' })
+        .fill('what is the weather today');
+      await stepPanel(page)
+        .getByRole('button', { name: 'Keep what is the weather' })
         .click();
       await expect(
-        stepPanel(page).getByRole('button', { name: 'Play what is the weather' }),
-      ).toHaveCount(0);
+        stepPanel(page).getByRole('button', {
+          name: 'Play what is the weather today',
+        }),
+      ).toBeVisible();
+      await expect.poll(storedSentences).toContain('what is the weather today');
       await expect.poll(storedSentences).not.toContain('what is the weather');
+
+      // The list is the user's, so the test leaves it as it found it.
+      await stepPanel(page)
+        .getByRole('button', { name: 'Remove what is the weather today' })
+        .click();
+      await expect(
+        stepPanel(page).getByRole('button', {
+          name: 'Play what is the weather today',
+        }),
+      ).toHaveCount(0);
+      await expect
+        .poll(storedSentences)
+        .not.toContain('what is the weather today');
     } finally {
       await page.request.delete(`${ALICE_BASE}/api/v1/intents/${id}`);
     }

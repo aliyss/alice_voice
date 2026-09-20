@@ -659,9 +659,12 @@ const LABEL_SUFFIX = '-label';
 /**
  * The color of the value of one link.
  *
- * The value stands on its link, so a value a message carried takes the
- * color of that link and every other value stays faint. The id of a value
- * is the id of its link with a suffix, so the tone is read off the link.
+ * The value stands on its link, and the link already carries the color of
+ * the route, so the value itself stays in the palette of text: it steps up
+ * from faint to default on a link of the route. Tinting it would leave a
+ * short machine value in a status color, which is hard to read at 11px and
+ * says the same thing twice. The id of a value is the id of its link with
+ * a suffix, so the place of the value on the route is read off the link.
  */
 function labelTone(
   tones: Record<string, FlowTone> | null,
@@ -670,7 +673,10 @@ function labelTone(
   const link = id.endsWith(LABEL_SUFFIX)
     ? id.slice(0, -LABEL_SUFFIX.length)
     : id;
-  return tones?.[link] ?? 'faint';
+  if (!tones) {
+    return 'faint';
+  }
+  return link in tones ? 'default' : 'faint';
 }
 
 /**
@@ -1087,6 +1093,7 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
             return (
               <g
                 key={edge.id}
+                data-edge={edge.id}
                 data-route={tone ?? undefined}
                 class={joinClassNames(
                   // A link of the route takes the color of the block it

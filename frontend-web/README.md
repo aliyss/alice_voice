@@ -230,11 +230,14 @@ so the chain the message follows reads apart from what it reads and from
 where it can leave.
 
 The graph reads one route at a time when the user tried a sentence: the
-blocks and links the message reached keep their place and everything else
+blocks and links the message reached keep their color and everything else
 fades, so one press shows the way a message really went instead of the
 whole pipeline at once. `src/utils/router-route.ts` turns the route of a
-preview into the ids of those blocks and links, and a stage that fell back
-lights the place of the reader it really ran.
+preview into the ids of those blocks and links and the tone of each one: a
+stage that answered is green, a stage that fell back to another reader is
+amber, and the stage that refused is red, and a link carries the tone of
+the block it leads into. A stage that fell back also lights the place of
+the reader it really ran.
 
 The graph is read only. Picking a block opens its settings beside the
 graph, in the words of that block: a stage carries its readers, the
@@ -249,11 +252,22 @@ as small or as thorough as the machine wants it.
 - **The message** takes the text of one message with the turns before it.
   It is also where a sentence is tried: the panel of this block holds the
   sentences the user really says, plays one of them, or plays all of them.
-  A sentence is read with the stored settings and runs nothing, so the
-  user reads the route before a turn depends on it. The graph then keeps
-  the route of the sentence that was read last and steps every stage and
-  place it did not meet back, and `Show every stage` returns the whole
-  graph.
+  A sentence is read with the stored settings and runs nothing: no turn,
+  no message, and no command comes of it. The sentences themselves are
+  stored (`preview_sentences`), because they are the tests of the
+  pipeline: a user who tuned the router against a sentence finds it again
+  after a reload, and the list survives the page that wrote it, and every
+  sentence can be edited in place. A sentence keeps its own log, so a run
+  of all of them is a run of many answers: pressing a sentence shows the
+  log of that sentence, and the run ends on the one it read last. The log
+  reads in two ways, and the switch above it picks the way: **Text** says
+  what the daemon would do in the words of a user, and **Debug** names
+  every value the daemon reported, field by field, with a hint beside each
+  of them (`src/utils/preview-log.ts`). Debug colors what is worth
+  finding: the answer, the color of every stage by the way it ended, and a
+  value the daemon read nothing for. The graph then keeps the route of the
+  shown sentence, colors it, and steps every stage and place it did not
+  meet back, and `Show every stage` returns the whole graph.
 - **Deterministic pass** proves a message the catalog can prove: an intent
   the message spells out, or one value of one list that only one intent
   owns. It needs no model and never guesses.

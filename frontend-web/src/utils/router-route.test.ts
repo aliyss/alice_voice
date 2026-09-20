@@ -115,13 +115,35 @@ describe('routeHighlight', () => {
       'run',
       'server',
     ]);
+    // The chain reads first, then the places that answered a stage: the
+    // server decided the turn and the built in model found the spans.
     expect(highlight?.edges).toEqual([
       'message-deterministic',
       'deterministic-retrieval',
       'retrieval-decision',
       'decision-extraction',
       'extraction-run',
+      'server-decision',
+      'gliner-extraction',
     ]);
+  });
+
+  it('walks the links of the places a stage read', () => {
+    const highlight = routeHighlight(
+      route([
+        step('fast_path', 'rules'),
+        step('retrieve', 'dense'),
+        step('decide', 'reranker'),
+        step('extract', 'spans'),
+      ]),
+      PLACES,
+    );
+
+    expect(highlight?.edges).toContain('server-retrieval');
+    expect(highlight?.edges).toContain('builtin-decision');
+    expect(highlight?.edges).toContain('gliner-extraction');
+    expect(highlight?.route.edges['server-retrieval']).toBe('ok');
+    expect(highlight?.route.edges['builtin-decision']).toBe('ok');
   });
 
   it('lights the vectors the ranking really read', () => {

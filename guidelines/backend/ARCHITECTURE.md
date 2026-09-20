@@ -346,6 +346,8 @@ So a value the deterministic pass proved, a value the rules of a list matched, a
 **Reading a sentence without a turn.**
 `POST /api/v1/resolver/preview` reads one message with the stored settings and runs nothing: no command, no store, and no stage on the socket stream.
 Everything else is a turn, so the reply carries the metadata a stored turn carries, and the settings page shows the route of a sentence before a turn depends on it.
+The sentences the user tries are a setting of their own, `preview_sentences`, and not a turn: a preview stores nothing else, so the tests of a pipeline outlive the page that wrote them while a turn never comes of one.
+The list is written whole, because the page adds and removes one sentence at a time and always knows the list it wants to keep; a sentence is trimmed, an empty one is dropped, and one the user writes twice is kept once.
 
 **The fixture benchmark.**
 `backend/config/router-eval.json` holds messages with the intent the catalog holds for each of them, or null for a message the catalog must refuse.

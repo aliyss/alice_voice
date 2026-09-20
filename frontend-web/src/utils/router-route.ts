@@ -10,7 +10,8 @@
  *
  * The ids are the ids the graph uses, so the mapping lives beside the
  * flow, and a stage this module does not know is left out rather than
- * guessed at.
+ * guessed at. Every link of the graph is named after the two blocks it
+ * joins, so a link this module can name is a link the graph draws.
  */
 import type { FlowRoute, FlowTone } from '~/components/ui/flow';
 
@@ -147,7 +148,9 @@ function close(draft: HighlightDraft): RouteHighlight {
  * deterministic pass answered does not light up the stages below it. The
  * place a stage read stands with the reader that really answered it, so a
  * turn the embedding server ranked lights the server and a turn the words
- * alone ranked lights no place at all.
+ * alone ranked lights no place at all. The link that place feeds the chain
+ * is walked with it, because the graph draws every place that way around:
+ * the dashed link a reader follows into the stage that read it.
  */
 export function routeHighlight(
   preview: ResolverPreviewDto | null,
@@ -163,6 +166,10 @@ export function routeHighlight(
     edges: [],
     tones: {},
   };
+  // The places the stages read, each with the link it feeds the chain. A
+  // place answers a stage rather than carrying the message, so its link is
+  // drawn last: the chain a reader follows is read first.
+  const readers: string[] = [];
   for (const step of route.steps) {
     if (step.outcome === 'skipped') {
       continue;
@@ -174,6 +181,10 @@ export function routeHighlight(
     if (place) {
       draft.nodes.add(place);
       draft.tones[place] = toneOf(step);
+      const link = `${place}-${block}`;
+      if (!readers.includes(link)) {
+        readers.push(link);
+      }
     }
   }
 
@@ -187,42 +198,37 @@ export function routeHighlight(
     }
   }
 
-  /**
-   * Leave the chain through one exit, with the tone of that turn.
-   *
-   * The link out of the chain belongs to the graph, so it is walked only
-   * when the turn really reached the stage that link leaves.
-   */
-  const exit = (id: 'refused' | 'asks', tone: FlowTone): RouteHighlight => {
-    const out = EXIT_LINKS[id];
-    draft.nodes.add(id);
-    draft.tones[id] = tone;
-    if (draft.nodes.has(out.from)) {
-      draft.edges.push(out.link);
-    }
-    return close(draft);
-  };
-
+  // The run the turn reached, the exit it took, or nothing when it stopped
+  // inside the chain.
+  let tail: string | null = null;
   if (!route.matched) {
     // The turn stopped at the stage that refused it, and the graph draws
     // one exit for that: a message that meets no intent leaves the chain.
-    return exit('refused', 'error');
+    draft.nodes.add('refused');
+    draft.tones.refused = 'error';
+    // The link out of the chain belongs to the graph, so it is walked only
+    // when the turn really reached the stage that link leaves.
+    tail = draft.nodes.has(EXIT_LINKS.refused.from)
+      ? EXIT_LINKS.refused.link
+      : null;
+  } else if ((preview?.reply.length ?? 0) > 0) {
+    // A matched turn that answered the user rather than running the command
+    // stopped at the extraction, because a value the intent needs is
+    // missing. The reply carries that answer, so the exit follows from it,
+    // and a turn without one would run its command.
+    draft.nodes.add('asks');
+    draft.tones.asks = 'warn';
+    tail = draft.nodes.has(EXIT_LINKS.asks.from) ? EXIT_LINKS.asks.link : null;
+  } else {
+    draft.nodes.add('run');
+    draft.tones.run = 'ok';
+    const run = `${walked.at(-1) ?? ''}-run`;
+    tail = CHAIN_LINKS.includes(run) ? run : null;
   }
-
-  // A matched turn that answered the user rather than running the command
-  // stopped at the extraction, because a value the intent needs is
-  // missing. The reply carries that answer, so the exit follows from it,
-  // and a turn without one would run its command.
-  if ((preview?.reply.length ?? 0) > 0) {
-    return exit('asks', 'warn');
+  if (tail) {
+    draft.edges.push(tail);
   }
-
-  draft.nodes.add('run');
-  draft.tones.run = 'ok';
-  const run = `${walked.at(-1) ?? ''}-run`;
-  if (CHAIN_LINKS.includes(run)) {
-    draft.edges.push(run);
-  }
+  draft.edges.push(...readers);
   return close(draft);
 }
 

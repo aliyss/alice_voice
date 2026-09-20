@@ -1,0 +1,30 @@
+name: alice-cargo
+include:
+  - compose.db.yml
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cargo
+    image: alice-voice-cargo:dev
+    container_name: alice-backend-cargo
+    ports:
+      - "${ALICE_PORT:-8787}:8787"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-alice}:${POSTGRES_PASSWORD:-alice}@db:5432/${POSTGRES_DB:-alice}
+      ALICE_LISTEN_ADDR: 0.0.0.0:8787
+      ALICE_CORS_ORIGIN: ${ALICE_CORS_ORIGIN:-http://localhost:5173}
+      ALICE_QUEUE_ENABLED: ${ALICE_QUEUE_ENABLED:-true}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ../backend:/app/backend:cached
+      - cargo_cache:/usr/local/cargo/registry
+      - cargo_target:/app/backend/target
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  cargo_cache:
+  cargo_target:

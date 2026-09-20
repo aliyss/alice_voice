@@ -1,0 +1,40 @@
+[package]
+name = "alice-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Background daemon binary and API server for Alice Voice."
+
+[features]
+default = []
+# Run the built in GLiNER models on a CUDA capable graphics card. The
+# build downloads a CUDA build of ONNX Runtime, so the machine needs the
+# CUDA runtime libraries on its library path. `shell.nix` provides them.
+gliner-cuda = ["gliner/cuda"]
+# Load ONNX Runtime from ORT_DYLIB_PATH at run time instead of linking it
+# at build time. Useful when a system provides its own ONNX Runtime.
+gliner-load-dynamic = ["gliner/load-dynamic"]
+
+[dependencies]
+alice-core = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+# The built in intent resolver. The package is `gline-rs`, the library is `gliner`.
+gliner = { package = "gline-rs", version = "1.1" }
+# Execution providers of the GLiNER session, from the ONNX Runtime wrapper.
+ort = "=2.0.0-rc.9"
+orp = "1.0"
+reqwest = { workspace = true }
+sea-orm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The tokenizer of the built in models of the router. The built in GLiNER
+# models bring their own reader, so this is the only direct use.
+tokenizers = "0.21"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+validator = { workspace = true }

@@ -1,0 +1,61 @@
+[server]
+listen_addr = "0.0.0.0:8787"
+cors_origin = "http://localhost:5173"
+
+[database]
+url = "sqlite://alice.db?mode=rwc"
+max_connections = 5
+# postgres example: "postgres://alice:alice@127.0.0.1:5432/alice"
+
+[queue]
+enabled = true
+page_limit_default = 50
+page_limit_max = 200
+max_message_len = 4000
+
+[resolver]
+# The engine that reads the intent of a message. The settings page
+# overrides it, so this is the value a fresh database starts from.
+#   llama  - a llama.cpp server reads the intent and the entity values.
+#   gliner - the built in GLiNER model reads both, so no server is needed.
+#   hybrid - the llama.cpp server reads the intent, GLiNER reads the
+#            entity values. A small language model names an action well,
+#            and GLiNER finds the exact span of an entity label well.
+backend = "hybrid"
+# OpenAI compatible llama.cpp server. The settings page overrides both
+# values, so this is the default a fresh database starts from.
+base_url = "http://127.0.0.1:8012/v1"
+model = "qwen3.5-4b"
+timeout_secs = 30
+# Largest answer the resolver reads. The answer is a short JSON object.
+max_tokens = 512
+# Number of earlier turns the resolver reads as context.
+context_turns = 6
+# Whether the model may reason before it answers. The decision is small,
+# so a reasoning trace costs seconds. Turn it on to read the trace on the
+# socket stream while the resolver works.
+thinking = false
+
+[resolver.gliner]
+# The built in model. The settings page downloads it and overrides this
+# value. One of: gliner_small-v2.1, gliner_medium-v2.1, gliner_multi-v2.1.
+model = "gliner_small-v2.1"
+# The device the model runs on. `auto` takes the best device this build
+# and this machine offer. A build with `--features gliner-cuda` can use a
+# CUDA capable graphics card, and `shell.nix` provides the libraries.
+device = "auto"
+# Smallest probability a label needs to count, between 0 and 1. An intent
+# scores on its own label and on the labels of the entities it needs, so
+# a low value reads more and a high value reads more surely.
+threshold = 0.3
+# Directory that holds the downloaded models.
+models_dir = "models/gliner"
+# Threads one inference may use.
+threads = 4
+
+[execution]
+# Whether the daemon runs the shell command of a resolved intent.
+# The command runs through `sh -c` as the settings page wrote it.
+enabled = true
+timeout_secs = 20
+max_output_bytes = 16384

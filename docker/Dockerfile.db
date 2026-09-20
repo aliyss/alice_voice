@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1.6
+# Database image for Alice Voice. Wraps postgres:16-alpine with init script.
+# You can also use the postgres image directly via compose.db.yml.
+FROM postgres:16-alpine
+
+# Optional init script to create extensions or seed data.
+COPY docker/init-db.sql /docker-entrypoint-initdb.d/01-init.sql
+
+# Healthcheck is defined in compose.
+EXPOSE 5432

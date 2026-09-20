@@ -1,0 +1,14 @@
+[package]
+name = "alice-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared backend types, errors, config, and DTOs for Alice Voice."
+
+[dependencies]
+chrono = { workspace = true }
+sea-orm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+validator = { workspace = true }

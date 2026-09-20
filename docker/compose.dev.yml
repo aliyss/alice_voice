@@ -1,0 +1,7 @@
+name: alice-dev
+# Full dev stack in Docker: db + cargo watch backend + vite web.
+# Use this when you want everything containerized.
+# For host cargo watch + host npm run dev, use only compose.db.yml.
+include:
+  - compose.cargo.yml
+  - compose.web.yml

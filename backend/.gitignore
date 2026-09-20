@@ -1,0 +1,18 @@
+# The build output of cargo. Every target directory of the workspace
+# lands here, including the ones of a release build.
+/target/
+
+# The models the daemon downloads. They are large and reproducible from the
+# settings page, so they stay out of the history. The directory itself is
+# kept by the daemon, and `variants/` holds the files of a second build.
+/models/
+
+# The database of a local run. A sqlite file holds the conversations and the
+# settings of one machine and is never the source of a deployment.
+/alice.db
+/alice.db-shm
+/alice.db-wal
+
+# The logs and the scratch databases of a local run.
+/.tmp/
+*.log

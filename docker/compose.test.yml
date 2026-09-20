@@ -1,0 +1,37 @@
+# Isolated Postgres for the frontend e2e suite.
+#
+# This stack never shares a database name, a port, or a volume with the dev
+# database in compose.db.yml, so an e2e run cannot read or write live data.
+# Use it instead of pointing DATABASE_URL at the `alice` database.
+#
+#   docker compose --env-file docker/.env -f docker/compose.test.yml up -d
+#   DATABASE_URL=postgres://alice:alice@127.0.0.1:5435/alice_e2e npm --prefix frontend-web run test:e2e
+#
+# Add -v to `down` to wipe the e2e data.
+name: alice-e2e-db
+services:
+  db-e2e:
+    image: postgres:16-alpine
+    container_name: alice-e2e-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_E2E_DB:-alice_e2e}
+      POSTGRES_USER: ${POSTGRES_E2E_USER:-alice}
+      POSTGRES_PASSWORD: ${POSTGRES_E2E_PASSWORD:-alice}
+    ports:
+      - "${POSTGRES_E2E_PORT:-5435}:5432"
+    volumes:
+      - pg_e2e_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_E2E_USER:-alice} -d ${POSTGRES_E2E_DB:-alice_e2e}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pg_e2e_data:

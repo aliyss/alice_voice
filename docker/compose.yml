@@ -1,0 +1,65 @@
+name: alice
+# Production full stack: postgres + backend (release) + web (build).
+# For dev with host cargo watch + host npm run dev, use compose.db.yml only.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: alice-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-alice}
+      POSTGRES_USER: ${POSTGRES_USER:-alice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alice}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alice} -d ${POSTGRES_DB:-alice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: alice-voice-backend:local
+    container_name: alice-backend
+    ports:
+      - "${ALICE_PORT:-8787}:8787"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-alice}:${POSTGRES_PASSWORD:-alice}@db:5432/${POSTGRES_DB:-alice}
+      ALICE_LISTEN_ADDR: 0.0.0.0:8787
+      ALICE_CORS_ORIGIN: ${ALICE_CORS_ORIGIN:-http://localhost:5173}
+      ALICE_QUEUE_ENABLED: ${ALICE_QUEUE_ENABLED:-true}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8787/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+      target: runner
+    image: alice-voice-web:local
+    container_name: alice-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      PUBLIC_ALICE_API_URL: http://backend:8787
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg_data:

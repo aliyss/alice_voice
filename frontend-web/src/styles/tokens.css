@@ -1,0 +1,177 @@
+/**
+ * Alice Voice web design tokens.
+ *
+ * The interface is a transparent heads-up display. It paints no opaque
+ * backdrop of its own, so every surface is a translucent glass panel and
+ * every line is a hairline.
+ *
+ * The palette is dark and calm. One warm accent carries all primary
+ * actions. The aura, the ring of light that shows the daemon state, is
+ * drawn by a shader and takes its color from the accent, so it has no
+ * tokens of its own. Its look per state lives in `src/utils/aura.ts`.
+ *
+ * `global.css` maps these tokens into Tailwind theme names. A component
+ * never uses a raw color value. Add a token here when a color is missing.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------------------------------------------------------------------
+   * Backdrop
+   * The default backdrop is transparent. The `solid` variant is a fallback
+   * for a browser tab that has nothing behind it.
+   * ------------------------------------------------------------------- */
+  --ds-color-bg: transparent;
+  --ds-color-bg-solid: #0a0709;
+  --ds-color-scrim: rgb(10 7 9 / 0.62);
+  --ds-color-vignette: rgb(10 7 9 / 0.34);
+
+  /* The quiet darkening at the edge of the shell. */
+  --ds-shell-vignette: radial-gradient(
+    120% 100% at 50% 42%,
+    transparent 35%,
+    var(--ds-color-vignette) 100%
+  );
+
+  /* ---------------------------------------------------------------------
+   * Glass surfaces
+   * The glass is dark and warm. It stays readable over a bright backdrop
+   * and over a dark one, because a translucent panel must not depend on
+   * what sits behind it.
+   * ------------------------------------------------------------------- */
+  --ds-color-surface: rgb(16 11 13 / 0.42);
+  --ds-color-surface-raised: rgb(31 21 23 / 0.5);
+  --ds-color-surface-sunken: rgb(8 5 6 / 0.55);
+
+  /* ---------------------------------------------------------------------
+   * Hairlines
+   * ------------------------------------------------------------------- */
+  --ds-color-line: rgb(255 255 255 / 0.1);
+  --ds-color-line-strong: rgb(255 255 255 / 0.22);
+  --ds-color-line-faint: rgb(255 255 255 / 0.05);
+
+  /* ---------------------------------------------------------------------
+   * Text
+   * ------------------------------------------------------------------- */
+  --ds-color-text: rgb(255 249 245 / 0.94);
+  --ds-color-text-muted: rgb(255 245 240 / 0.56);
+  --ds-color-text-faint: rgb(255 244 238 / 0.34);
+  --ds-color-text-inverse: rgb(20 10 8 / 0.92);
+
+  /* ---------------------------------------------------------------------
+   * Accent
+   * One warm accent carries all primary actions.
+   * ------------------------------------------------------------------- */
+  --ds-color-accent: #ff6f4d;
+  --ds-color-accent-strong: #ff9670;
+  --ds-color-accent-deep: #b8341c;
+
+  /*
+   * The veil is the accent at the strength of a panel. A turn of the user
+   * is the voice of the user, so it carries the veil and the daemon turns
+   * carry the plain glass.
+   */
+  --ds-color-accent-veil: rgb(255 111 77 / 0.14);
+  --ds-color-accent-edge: rgb(255 111 77 / 0.34);
+
+  /* ---------------------------------------------------------------------
+   * Status tones
+   * ------------------------------------------------------------------- */
+  --ds-color-ok: #86dcae;
+  --ds-color-warn: #ffc473;
+  --ds-color-error: #ff7a72;
+
+  /* ---------------------------------------------------------------------
+   * Motion tempo
+   * A turn of the spinner. The tempo of the aura is not here: it is a
+   * property of its state, in `src/utils/aura.ts`.
+   * ------------------------------------------------------------------- */
+  --ds-spin: 30s;
+
+  /* ---------------------------------------------------------------------
+   * Radius
+   * ------------------------------------------------------------------- */
+  --ds-radius-sm: 3px;
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 16px;
+  --ds-radius-full: 999px;
+
+  /* ---------------------------------------------------------------------
+   * Space
+   * Components use the Tailwind numeric scale. These tokens serve the
+   * global rules such as the page padding.
+   * ------------------------------------------------------------------- */
+  --ds-space-2xs: 2px;
+  --ds-space-xs: 4px;
+  --ds-space-sm: 8px;
+  --ds-space-md: 16px;
+  --ds-space-lg: 24px;
+  --ds-space-xl: 32px;
+
+  /* ---------------------------------------------------------------------
+   * Type
+   * ------------------------------------------------------------------- */
+  --ds-font-hud: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, monospace;
+  --ds-font-body: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  /* ---------------------------------------------------------------------
+   * Motion
+   * ------------------------------------------------------------------- */
+  --ds-duration-fast: 120ms;
+  --ds-duration-base: 220ms;
+  --ds-duration-slow: 420ms;
+  --ds-ease-calm: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* ---------------------------------------------------------------------
+   * Scrollbar
+   * A scroll region must look scrollable. The thumb stays visible when the
+   * pointer is away, because the shell does not scroll the document.
+   * ------------------------------------------------------------------- */
+  --ds-color-scrollbar: rgb(255 255 255 / 0.28);
+  --ds-color-scrollbar-active: rgb(255 255 255 / 0.5);
+}
+
+/* =======================================================================
+ * Backdrop variants
+ * The shell sets `data-backdrop` on the document element.
+ * ===================================================================== */
+
+[data-backdrop='solid'] {
+  --ds-color-bg: var(--ds-color-bg-solid);
+}
+
+/* =======================================================================
+ * Keyframes
+ * ===================================================================== */
+
+@keyframes ds-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ds-hud-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+/*
+ * Reduced motion. A reader who asked for less of it gets a spinner that
+ * turns slowly. The aura reads the same preference itself, in
+ * `src/components/viz/aura.tsx`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ds-spin: 120s;
+  }
+}

@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.6
+# Cargo watch image for local dev where DB runs in Docker but backend runs with live reload.
+FROM rust:1.82-bookworm AS dev
+WORKDIR /app
+
+# Install cargo-watch for live reload.
+RUN cargo install cargo-watch --locked
+
+# Cache dependencies: copy manifests and dummy sources, then fetch.
+COPY backend/Cargo.toml ./backend/Cargo.toml
+COPY backend/rustfmt.toml ./backend/rustfmt.toml
+COPY backend/crates/alice-core/Cargo.toml ./backend/crates/alice-core/Cargo.toml
+COPY backend/crates/alice-daemon/Cargo.toml ./backend/crates/alice-daemon/Cargo.toml
+RUN mkdir -p backend/crates/alice-core/src backend/crates/alice-daemon/src && \
+    echo "pub fn dummy(){}" > backend/crates/alice-core/src/lib.rs && \
+    printf "fn main(){}" > backend/crates/alice-daemon/src/main.rs && \
+    cargo fetch --manifest-path backend/Cargo.toml || true
+
+# Real sources will be mounted as volume in compose, but copy for standalone build.
+COPY backend ./backend
+
+EXPOSE 8787
+ENV RUST_LOG=info
+# The DATABASE_URL is injected by compose (postgres via db service) or .env for host.
+# Use -C backend so cargo finds Cargo.toml; -w is not needed when -C is set (watchexec watches workdir).
+CMD ["cargo", "watch", "-C", "backend", "-x", "run -p alice-daemon"]

@@ -40,6 +40,7 @@ use crate::server::rest::validate_text;
 use crate::server::state::AppState;
 
 /// Reply of `GET /api/v1/resolver`.
+#[utoipa::path(get, path = "/api/v1/resolver", tag = "resolver", responses((status = 200, description = "State of the resolver", body = ResolverStatusDto)))]
 #[instrument(skip(state))]
 pub async fn get_resolver_handler(
     State(state): State<AppState>,
@@ -54,6 +55,16 @@ pub async fn get_resolver_handler(
 /// the user sends it. The reply carries the metadata of a stored turn, so
 /// the route of a sentence and the route of a message the daemon really
 /// handled read the same way.
+#[utoipa::path(
+    post,
+    path = "/api/v1/resolver/preview", tag = "resolver",
+    request_body = ResolverPreviewRequestDto,
+    responses(
+        (status = 200, description = "How the resolver would read the message", body = ResolverPreviewDto),
+        (status = 400, description = "Invalid input"),
+        (status = 413, description = "Message too long")
+    )
+)]
 #[instrument(skip(state, body))]
 pub async fn preview_message_handler(
     State(state): State<AppState>,
@@ -86,6 +97,16 @@ pub async fn preview_message_handler(
 ///
 /// The download runs in the background, so the reply carries the state the
 /// settings page polls while it runs.
+#[utoipa::path(
+    post,
+    path = "/api/v1/resolver/gliner/models/{id}/download", tag = "resolver",
+    params(("id" = String, Path, description = "Model id, example: gliner_small-v2.1")),
+    responses(
+        (status = 200, description = "State of the resolver", body = ResolverStatusDto),
+        (status = 404, description = "The daemon knows no model with that identifier"),
+        (status = 409, description = "A download already runs")
+    )
+)]
 #[instrument(skip(state))]
 pub async fn download_gliner_model_handler(
     State(state): State<AppState>,
@@ -106,6 +127,15 @@ pub async fn download_gliner_model_handler(
 }
 
 /// Reply of `DELETE /api/v1/resolver/gliner/models/{id}`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/resolver/gliner/models/{id}", tag = "resolver",
+    params(("id" = String, Path, description = "Model id, example: gliner_small-v2.1")),
+    responses(
+        (status = 200, description = "State of the resolver", body = ResolverStatusDto),
+        (status = 404, description = "The daemon knows no model with that identifier")
+    )
+)]
 #[instrument(skip(state))]
 pub async fn delete_gliner_model_handler(
     State(state): State<AppState>,
@@ -126,6 +156,16 @@ pub async fn delete_gliner_model_handler(
 ///
 /// The download runs in the background, so the reply carries the state the
 /// settings page polls while it runs.
+#[utoipa::path(
+    post,
+    path = "/api/v1/resolver/local/models/{id}/download", tag = "resolver",
+    params(("id" = String, Path, description = "Model id, example: bge-small-en-v1.5")),
+    responses(
+        (status = 200, description = "State of the resolver", body = ResolverStatusDto),
+        (status = 404, description = "The daemon knows no model with that identifier"),
+        (status = 409, description = "A download already runs")
+    )
+)]
 #[instrument(skip(state))]
 pub async fn download_local_model_handler(
     State(state): State<AppState>,
@@ -146,6 +186,15 @@ pub async fn download_local_model_handler(
 }
 
 /// Reply of `DELETE /api/v1/resolver/local/models/{id}`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/resolver/local/models/{id}", tag = "resolver",
+    params(("id" = String, Path, description = "Model id, example: bge-small-en-v1.5")),
+    responses(
+        (status = 200, description = "State of the resolver", body = ResolverStatusDto),
+        (status = 404, description = "The daemon knows no model with that identifier")
+    )
+)]
 #[instrument(skip(state))]
 pub async fn delete_local_model_handler(
     State(state): State<AppState>,

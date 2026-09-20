@@ -1,0 +1,2855 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Alice Voice Backend API",
+    "description": "REST and socket contract owned by the backend. Frontend copies DTOs from this file.",
+    "license": {
+      "name": ""
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787",
+      "description": "Local daemon"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reply of `GET /api/health` and `GET /health`.",
+        "operationId": "health_handler",
+        "responses": {
+          "200": {
+            "description": "Health reply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Reply of `POST /api/v1/chat`.",
+        "description": "The daemon handles the message while the request runs: it resolves the\nintent, runs its command, and answers. Every stage streams on the\nsocket stream, so the interface shows the turn while it runs.\n\nThe daemon stores the turn in a conversation when the queue is on. It\nanswers without a store when the queue is off.",
+        "operationId": "chat_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Handled turn",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatReplyDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Conversation not found"
+          },
+          "413": {
+            "description": "Message too long"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Reply of `GET /api/v1/conversations`.",
+        "operationId": "list_conversations_handler",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum items to return.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Reply of `GET /api/v1/conversations/{id}`.",
+        "operationId": "get_conversation_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetailDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        }
+      }
+    },
+    "/api/v1/dependencies": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reply of `GET /api/v1/dependencies`.",
+        "operationId": "get_dependencies_handler",
+        "responses": {
+          "200": {
+            "description": "State of the dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DependenciesDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Upgrade `GET /api/v1/events` to a WebSocket.",
+        "operationId": "events_handler",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols"
+          }
+        }
+      }
+    },
+    "/api/v1/intents": {
+      "get": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `GET /api/v1/intents`.",
+        "operationId": "list_intents_handler",
+        "responses": {
+          "200": {
+            "description": "Intent list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentListDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `POST /api/v1/intents`.",
+        "operationId": "create_intent_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentWriteDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "409": {
+            "description": "The name is already in use"
+          }
+        }
+      }
+    },
+    "/api/v1/intents/examples": {
+      "post": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `POST /api/v1/intents/examples`.",
+        "description": "The endpoint adds the example intents that this catalog does not hold\nyet and answers with the whole catalog, so the settings page shows the\nnew intents without a second read.",
+        "operationId": "create_examples_handler",
+        "responses": {
+          "200": {
+            "description": "The whole catalog after the write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/intents/script/preview": {
+      "post": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `POST /api/v1/intents/script/preview`.",
+        "description": "The settings page runs the script of an entity here, so a user reads\nthe values a script answers with before a turn reads them.",
+        "operationId": "preview_script_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptPreviewWriteDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The values the script answered with",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptPreviewDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/intents/{id}": {
+      "put": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `PUT /api/v1/intents/{id}`.",
+        "operationId": "update_intent_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Intent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentWriteDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "404": {
+            "description": "Intent not found"
+          },
+          "409": {
+            "description": "The name is already in use"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "intents"
+        ],
+        "summary": "Reply of `DELETE /api/v1/intents/{id}`.",
+        "operationId": "delete_intent_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Intent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Intent not found"
+          }
+        }
+      }
+    },
+    "/api/v1/resolver": {
+      "get": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `GET /api/v1/resolver`.",
+        "operationId": "get_resolver_handler",
+        "responses": {
+          "200": {
+            "description": "State of the resolver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/resolver/gliner/models/{id}": {
+      "delete": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `DELETE /api/v1/resolver/gliner/models/{id}`.",
+        "operationId": "delete_gliner_model_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Model id, example: gliner_small-v2.1",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "State of the resolver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverStatusDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The daemon knows no model with that identifier"
+          }
+        }
+      }
+    },
+    "/api/v1/resolver/gliner/models/{id}/download": {
+      "post": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `POST /api/v1/resolver/gliner/models/{id}/download`.",
+        "description": "The download runs in the background, so the reply carries the state the\nsettings page polls while it runs.",
+        "operationId": "download_gliner_model_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Model id, example: gliner_small-v2.1",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "State of the resolver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverStatusDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The daemon knows no model with that identifier"
+          },
+          "409": {
+            "description": "A download already runs"
+          }
+        }
+      }
+    },
+    "/api/v1/resolver/local/models/{id}": {
+      "delete": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `DELETE /api/v1/resolver/local/models/{id}`.",
+        "operationId": "delete_local_model_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Model id, example: bge-small-en-v1.5",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "State of the resolver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverStatusDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The daemon knows no model with that identifier"
+          }
+        }
+      }
+    },
+    "/api/v1/resolver/local/models/{id}/download": {
+      "post": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `POST /api/v1/resolver/local/models/{id}/download`.",
+        "description": "The download runs in the background, so the reply carries the state the\nsettings page polls while it runs.",
+        "operationId": "download_local_model_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Model id, example: bge-small-en-v1.5",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "State of the resolver",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverStatusDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The daemon knows no model with that identifier"
+          },
+          "409": {
+            "description": "A download already runs"
+          }
+        }
+      }
+    },
+    "/api/v1/resolver/preview": {
+      "post": {
+        "tags": [
+          "resolver"
+        ],
+        "summary": "Reply of `POST /api/v1/resolver/preview`.",
+        "description": "The preview reads one message with the stored settings and runs\nnothing, so the settings page can show the route of a sentence before\nthe user sends it. The reply carries the metadata of a stored turn, so\nthe route of a sentence and the route of a message the daemon really\nhandled read the same way.",
+        "operationId": "preview_message_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolverPreviewRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "How the resolver would read the message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverPreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "413": {
+            "description": "Message too long"
+          }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Reply of `GET /api/v1/settings`.",
+        "operationId": "get_settings_handler",
+        "responses": {
+          "200": {
+            "description": "Stored settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Reply of `PUT /api/v1/settings`.",
+        "description": "A field the caller does not send keeps its stored value, so a caller\nmay change one setting without sending the others.",
+        "operationId": "put_settings_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdateDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reply of `GET /api/v1/status`.",
+        "operationId": "status_handler",
+        "responses": {
+          "200": {
+            "description": "Status reply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Alias of `GET /api/health` at `GET /health`.",
+        "operationId": "health_alias_handler",
+        "responses": {
+          "200": {
+            "description": "Health reply",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChatMessageDto": {
+        "type": "object",
+        "description": "One stored turn of a conversation.",
+        "required": [
+          "id",
+          "role",
+          "text",
+          "createdAt"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Resolver confidence between 0 and 1, or null."
+          },
+          "conversationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Conversation the message belongs to, or null when the queue is off."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon stored the message, in ISO 8601."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable message identifier."
+          },
+          "intentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Resolved intent identifier, or null when none."
+          },
+          "intentName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the resolved intent, or null when none."
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageMetaDto",
+                "description": "How the daemon read the turn, or null when it read nothing."
+              }
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/ChatRoleDto",
+            "description": "Speaker."
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text."
+          }
+        }
+      },
+      "ChatReplyDto": {
+        "type": "object",
+        "description": "Reply of `POST /api/v1/chat`.",
+        "required": [
+          "stored",
+          "user",
+          "reply"
+        ],
+        "properties": {
+          "conversation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConversationDto",
+                "description": "The conversation of the turn, or null when the queue is off."
+              }
+            ]
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ChatMessageDto",
+            "description": "Daemon reply."
+          },
+          "stored": {
+            "type": "boolean",
+            "description": "True when the daemon stored the turn, false when the queue is off."
+          },
+          "user": {
+            "$ref": "#/components/schemas/ChatMessageDto",
+            "description": "Stored user message."
+          }
+        }
+      },
+      "ChatRequestDto": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/chat`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Conversation to append to. Null starts a new conversation."
+          },
+          "text": {
+            "type": "string",
+            "description": "Text the user typed."
+          }
+        }
+      },
+      "ChatRoleDto": {
+        "type": "string",
+        "description": "Speaker of one chat message.",
+        "enum": [
+          "user",
+          "assistant"
+        ]
+      },
+      "ConversationDetailDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/conversations/{id}`.",
+        "required": [
+          "conversation",
+          "messages"
+        ],
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/ConversationDto",
+            "description": "The conversation."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageDto"
+            },
+            "description": "The full message history, oldest first."
+          }
+        }
+      },
+      "ConversationDto": {
+        "type": "object",
+        "description": "One conversation of the daemon. The conversation owns its message history.",
+        "required": [
+          "id",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon created the conversation, in ISO 8601."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable conversation identifier."
+          },
+          "title": {
+            "type": "string",
+            "description": "Title the daemon generated from the first message."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon stored the last message, in ISO 8601."
+          }
+        }
+      },
+      "ConversationListDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/conversations`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationDto"
+            },
+            "description": "Conversations, most recently updated first."
+          }
+        }
+      },
+      "ConversationQuery": {
+        "type": "object",
+        "description": "Query of `GET /api/v1/conversations`.",
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Maximum items to return.",
+            "minimum": 0
+          }
+        }
+      },
+      "DaemonStateDto": {
+        "type": "string",
+        "description": "Daemon state that mirrors the backend state machine.",
+        "enum": [
+          "Idle",
+          "Listening",
+          "Transcribing",
+          "Resolving",
+          "Executing",
+          "Error"
+        ]
+      },
+      "DependenciesDto": {
+        "type": "object",
+        "description": "The state of the dependencies of the settings surface.\n\nThe reply needs no database, so the settings page can tell a database\nthat is down from a daemon that is down.",
+        "required": [
+          "configured",
+          "database",
+          "llama",
+          "gliner"
+        ],
+        "properties": {
+          "configured": {
+            "$ref": "#/components/schemas/SettingsDto",
+            "description": "The values the daemon starts from.\nThe settings page shows them while the database does not answer."
+          },
+          "database": {
+            "$ref": "#/components/schemas/DependencyDto",
+            "description": "The database that stores every setting."
+          },
+          "gliner": {
+            "$ref": "#/components/schemas/DependencyDto",
+            "description": "The built in GLiNER resolver."
+          },
+          "llama": {
+            "$ref": "#/components/schemas/LlamaDependencyDto",
+            "description": "The llama.cpp server that reads intents and values."
+          }
+        }
+      },
+      "DependencyDto": {
+        "type": "object",
+        "description": "One dependency a setting needs.\n\nA setting belongs to a place that stores it and to a service that\nmakes it work. The settings page keeps a control usable only when\nevery place it needs answers, so the user never saves a value that\ncannot take effect.",
+        "required": [
+          "key",
+          "label",
+          "reachable"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it does not answer, or what it reports about itself."
+          },
+          "key": {
+            "type": "string",
+            "description": "Short key of the dependency, for example `database`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Name the settings page shows."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Whether the dependency answers."
+          }
+        }
+      },
+      "EntityKindDto": {
+        "type": "string",
+        "description": "The kind of one entity of an intent.",
+        "enum": [
+          "open",
+          "closed",
+          "script"
+        ]
+      },
+      "GlinerDownloadDto": {
+        "type": "object",
+        "description": "The GLiNER download that runs right now.",
+        "required": [
+          "model",
+          "receivedBytes",
+          "done"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "description": "Whether the download finished."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The error that stopped the download, or null."
+          },
+          "model": {
+            "type": "string",
+            "description": "Identifier of the model."
+          },
+          "receivedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written so far.",
+            "minimum": 0
+          },
+          "totalBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Size the server announced, or null when it announced none.",
+            "minimum": 0
+          }
+        }
+      },
+      "GlinerModelDto": {
+        "type": "object",
+        "description": "One GLiNER model the daemon can download.",
+        "required": [
+          "id",
+          "name",
+          "note",
+          "sizeBytes",
+          "installed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifier of the model, for example `gliner_small-v2.1`."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether the model is on disk."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name the settings page shows."
+          },
+          "note": {
+            "type": "string",
+            "description": "One sentence about the model."
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the download in bytes.",
+            "minimum": 0
+          }
+        }
+      },
+      "GlinerStoreDto": {
+        "type": "object",
+        "description": "State of the built in GLiNER models.",
+        "required": [
+          "model",
+          "device",
+          "activeDevice",
+          "installed",
+          "threshold",
+          "modelsDir",
+          "devices",
+          "cudaBuild",
+          "models"
+        ],
+        "properties": {
+          "activeDevice": {
+            "type": "string",
+            "description": "The device the selected model would run on now."
+          },
+          "cudaBuild": {
+            "type": "boolean",
+            "description": "Whether this build carries CUDA support."
+          },
+          "device": {
+            "type": "string",
+            "description": "The device the selected model should run on."
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Devices this build and this machine can run on, best first."
+          },
+          "download": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GlinerDownloadDto",
+                "description": "The download that runs right now, or null."
+              }
+            ]
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether the selected model is installed."
+          },
+          "model": {
+            "type": "string",
+            "description": "Identifier of the selected model."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GlinerModelDto"
+            },
+            "description": "Every model the daemon can download."
+          },
+          "modelsDir": {
+            "type": "string",
+            "description": "Directory that holds the downloaded models."
+          },
+          "threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest probability a label needs to count."
+          }
+        }
+      },
+      "HealthDto": {
+        "type": "object",
+        "description": "Health reply of `GET /api/health`.",
+        "required": [
+          "status",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Service status."
+          },
+          "version": {
+            "type": "string",
+            "description": "Daemon version."
+          }
+        }
+      },
+      "IntentDto": {
+        "type": "object",
+        "description": "One intent of the daemon. An intent runs one shell command.",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "command",
+          "entities",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command the daemon runs for this intent."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon created the intent, in ISO 8601."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the intent does, in one sentence. The resolver reads it."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntentEntityDto"
+            },
+            "description": "The entities the intent reads from the message."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Phrases a user may say for this intent, one per entry.\n\nThe resolver reads them next to the name, so \"launch firefox\"\npoints at `open application` as well as the name does."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable intent identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique name the resolver chooses from, for example `get weather`."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon last stored the intent, in ISO 8601."
+          }
+        }
+      },
+      "IntentEntityDto": {
+        "type": "object",
+        "description": "One entity of an intent.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "values"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable entity identifier."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EntityKindDto",
+            "description": "Whether the entity is open or closed."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the entity, for example `city`."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the intent needs a value for this entity.\n\nA required entity the daemon cannot read makes the turn ask the\nuser for the value. An optional entity the daemon cannot read lets\nthe command run without it."
+          },
+          "script": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shell command that provides the values of a script entity, or none."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Values of a closed entity. An open entity has none."
+          }
+        }
+      },
+      "IntentEntityWriteDto": {
+        "type": "object",
+        "description": "One entity of the body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/EntityKindDto",
+            "description": "Whether the entity is open or closed."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the entity."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether the intent needs a value for this entity. It defaults to yes."
+          },
+          "script": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shell command that provides the values of a script entity."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Values of a closed entity. An open entity sends none."
+          }
+        }
+      },
+      "IntentListDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/intents`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntentDto"
+            },
+            "description": "The intents, in name order."
+          }
+        }
+      },
+      "IntentWriteDto": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.\nThe daemon replaces the entity set of the intent with the sent one.",
+        "required": [
+          "name",
+          "description",
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command the daemon runs for this intent."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the intent does, in one sentence."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntentEntityWriteDto"
+            },
+            "description": "The entities the intent reads from the message."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Phrases a user may say for this intent, one per entry."
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique name of the intent."
+          }
+        }
+      },
+      "LabelBudgetDto": {
+        "type": "object",
+        "description": "How many labels the intent configuration adds up to.",
+        "required": [
+          "labels",
+          "softLimit",
+          "hardLimit",
+          "intents",
+          "overSoft",
+          "overHard"
+        ],
+        "properties": {
+          "hardLimit": {
+            "type": "integer",
+            "description": "Number of labels a GLiNER model reads before it degrades.",
+            "minimum": 0
+          },
+          "intentLimit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Number of intents the resolver can offer, or null when it has no\nlimit. The layered router reads a catalog of any size, because\nonly the short list of one turn reaches a model.",
+            "minimum": 0
+          },
+          "intents": {
+            "type": "integer",
+            "description": "Number of configured intents.",
+            "minimum": 0
+          },
+          "labels": {
+            "type": "integer",
+            "description": "Number of labels a GLiNER model reads for this configuration.\nOne label per intent, plus one per entity, plus one per value of\na closed entity.",
+            "minimum": 0
+          },
+          "overHard": {
+            "type": "integer",
+            "description": "Number of labels that are past the hard limit, or zero.",
+            "minimum": 0
+          },
+          "overSoft": {
+            "type": "integer",
+            "description": "Number of labels that are past the soft limit, or zero.",
+            "minimum": 0
+          },
+          "softLimit": {
+            "type": "integer",
+            "description": "Number of labels a GLiNER model reads comfortably.",
+            "minimum": 0
+          },
+          "warning": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The warning the settings page shows, or null."
+          }
+        }
+      },
+      "LlamaDependencyDto": {
+        "type": "object",
+        "description": "The llama.cpp server as the settings page sees it.",
+        "required": [
+          "reachable",
+          "baseUrl",
+          "model",
+          "models"
+        ],
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "description": "The address the daemon asked."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it does not answer, or null."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model the daemon stored."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The models the server offers. Empty when the server is down."
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Whether the server answers."
+          }
+        }
+      },
+      "LlamaStatusDto": {
+        "type": "object",
+        "description": "Configuration of the llama.cpp resolver.",
+        "required": [
+          "baseUrl",
+          "model",
+          "intentLimit"
+        ],
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "description": "Base URL of the llama.cpp server."
+          },
+          "intentLimit": {
+            "type": "integer",
+            "description": "Number of intents the resolver can offer.",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "Model name the server answers to."
+          }
+        }
+      },
+      "LocalDownloadDto": {
+        "type": "object",
+        "description": "The download of one built in model of the router that runs right now.",
+        "required": [
+          "model",
+          "receivedBytes",
+          "done"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "description": "Whether the download finished."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The error that stopped the download, or null."
+          },
+          "model": {
+            "type": "string",
+            "description": "Identifier of the model."
+          },
+          "receivedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes written so far.",
+            "minimum": 0
+          },
+          "totalBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Size the server announced, or null when it announced none.",
+            "minimum": 0
+          }
+        }
+      },
+      "LocalModelDto": {
+        "type": "object",
+        "description": "One built in model of the router the daemon can download.",
+        "required": [
+          "id",
+          "name",
+          "note",
+          "role",
+          "sizeBytes",
+          "installed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifier of the model, for example `bge-small-en-v1.5`."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "Whether the model is on disk."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name the settings page shows."
+          },
+          "note": {
+            "type": "string",
+            "description": "One sentence about the model."
+          },
+          "role": {
+            "type": "string",
+            "description": "What the model reads: `embeddings` or `reranker`."
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the download in bytes.",
+            "minimum": 0
+          }
+        }
+      },
+      "LocalStoreDto": {
+        "type": "object",
+        "description": "State of the built in models of the router.",
+        "required": [
+          "modelsDir",
+          "models"
+        ],
+        "properties": {
+          "download": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LocalDownloadDto",
+                "description": "The download that runs right now, or null."
+              }
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LocalModelDto"
+            },
+            "description": "Every model the daemon can download."
+          },
+          "modelsDir": {
+            "type": "string",
+            "description": "Directory that holds the downloaded models."
+          }
+        }
+      },
+      "MessageCandidateDto": {
+        "type": "object",
+        "description": "One intent the retrieval pass offered for a turn.",
+        "required": [
+          "name",
+          "score",
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "type": "string",
+            "description": "Which evidence read the score, for example `words` or `embedding`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the intent."
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "description": "The score of the intent for this turn, between 0 and 1."
+          }
+        }
+      },
+      "MessageEntityDto": {
+        "type": "object",
+        "description": "One entity of an intent with the value the resolver read for it.\n\nA value is read by one reader of the pipeline, and which one read it is\nwhat tells a value the daemon proved from a value a model guessed, so\nthe read is reported next to the value it produced.",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "engine": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The engine that ran the reader, or null when the daemon read the\nvalue itself."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model the reader ran, or null when it ran none."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the entity, for example `city`."
+          },
+          "read": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the reader read before the value was matched to an entry of a\nlist, or null when the value is the entry itself."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "The similarity the match read, between 0 and 1, or null when the\nreader reported no score."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the daemon read the value, or null when it read none:\n`fast_path`, `list`, `embedding`, `spans`, or `model`."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value the resolver read, empty when it read none."
+          }
+        }
+      },
+      "MessageMetaDto": {
+        "type": "object",
+        "description": "How the daemon read one handled turn.\n\nThe resolver owns two steps: it chooses the intent, and it reads the\nvalues of the entities of that intent. Either step may run on the\nllama.cpp server or on the built in GLiNER model, so a turn reports\nthe engine of each step. The rest of the metadata is what the daemon\nthen ran, so the transcript can explain a stored turn.",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageCandidateDto"
+            },
+            "description": "The intents the retrieval pass kept for this turn, best first.\n\nThe short list is the evidence of the decision, so a user who\nreads `no intent matched` still reads what the catalog offered."
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The command after the daemon put the values in, or null."
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long the command ran, in milliseconds, or null when none ran.",
+            "minimum": 0
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageEntityDto"
+            },
+            "description": "The entities of the intent with the values the daemon read."
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The exit code of the command, or null when none ran."
+          },
+          "intentEngine": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The engine that chose the intent, or null when none chose one."
+          },
+          "intentModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model that engine ran, or null when the daemon cannot name it."
+          },
+          "route": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageRouteDto",
+                "description": "How the layered router read the turn, stage by stage, or null when\nthe backend of the turn is not the router.\n\nThe stage above names the stage that decided, and this names every\nstage the turn passed with the reader it ran and the short list it\nread, so a stored turn can be read back the way the daemon read it."
+              }
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The stage of the layered router that decided the turn, or null\nwhen the backend of the turn is not the router.\n\nA turn the deterministic pass proved reads `fast_path`, a turn the\nretrieval scores decided reads `retrieve`, and a turn a model\nchose from the short list reads `rerank`."
+          },
+          "valueEngine": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The engine that read the entity values, or null when none did."
+          },
+          "valueModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model that engine ran, or null when the daemon cannot name it."
+          }
+        }
+      },
+      "MessageRouteDto": {
+        "type": "object",
+        "description": "How the layered router read one turn, stage by stage.\n\nThe stages of the router run in order and the first one that can answer\nends the turn, so the stages a turn passed are its route. The route\ncarries the reader every stage ran and the short list it read, which is\nwhat a reader of the transcript needs to see why a message met an\nintent, met none, or was answered by a stage it did not expect.",
+        "required": [
+          "matched"
+        ],
+        "properties": {
+          "matched": {
+            "type": "boolean",
+            "description": "True when the turn met an intent."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the router refused, or null when it chose."
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The stage that decided the turn, or null when the router refused."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageRouteStepDto"
+            },
+            "description": "The stages the turn passed, in the order they ran."
+          }
+        }
+      },
+      "MessageRouteStepDto": {
+        "type": "object",
+        "description": "One stage of the layered router in one turn.\n\nEvery stage reports what it read and how it ended, so a turn that a\nmodel answered and a turn the words answered are told apart, and a\nstage that fell back to its cheaper reader says so.",
+        "required": [
+          "stage",
+          "outcome",
+          "reader",
+          "durationMs"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageCandidateDto"
+            },
+            "description": "The candidates the stage read, best first."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One sentence about what the stage read, or null."
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the stage took, in milliseconds.",
+            "minimum": 0
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model the reader ran, or null when it ran none."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "How the stage ended: `matched`, `refused`, `passed`, `fell_back`,\nor `skipped`."
+          },
+          "reader": {
+            "type": "string",
+            "description": "The reader the stage ran, for example `rules`, `words`, `reranker`,\nor `model`."
+          },
+          "stage": {
+            "type": "string",
+            "description": "The stage: `fast_path`, `retrieve`, `decide`, or `extract`."
+          }
+        }
+      },
+      "OutputStreamDto": {
+        "type": "string",
+        "description": "The stream a command wrote one line to.",
+        "enum": [
+          "stdout",
+          "stderr"
+        ]
+      },
+      "ResolverPreviewDto": {
+        "type": "object",
+        "description": "Reply of `POST /api/v1/resolver/preview`.\n\nThe preview carries the same metadata a stored turn carries, so a\nsentence the user tries is read with the same report as a message the\ndaemon really handled, minus the run. The intent it met, the reader\nthat read every value, and the route the message took are the report a\nuser tunes the pipeline by.",
+        "required": [
+          "text",
+          "matched",
+          "reply"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "The probability of the choice, or null when the resolver sent none."
+          },
+          "intent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name of the intent the resolver met, or null when it met none."
+          },
+          "matched": {
+            "type": "boolean",
+            "description": "True when the resolver met an intent."
+          },
+          "meta": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageMetaDto",
+                "description": "How the daemon read the turn, or null when it read nothing at all."
+              }
+            ]
+          },
+          "reply": {
+            "type": "string",
+            "description": "The reply the daemon would store, or empty when the turn would run\nthe command of its intent."
+          },
+          "text": {
+            "type": "string",
+            "description": "The message the daemon read."
+          }
+        }
+      },
+      "ResolverPreviewRequestDto": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/resolver/preview`.\n\nA preview reads one message the way a turn would and runs nothing, so\nthe settings page can show the route of a sentence before the user\nsends it.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The message to read."
+          }
+        }
+      },
+      "ResolverStatusDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/resolver`.\nThis tells the settings page which engines are ready to work.",
+        "required": [
+          "backend",
+          "llama",
+          "gliner",
+          "budget",
+          "router"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string",
+            "description": "The engine that reads the intent of a message."
+          },
+          "budget": {
+            "$ref": "#/components/schemas/LabelBudgetDto",
+            "description": "How many labels the intent configuration adds up to."
+          },
+          "gliner": {
+            "$ref": "#/components/schemas/GlinerStoreDto",
+            "description": "State of the built in GLiNER models."
+          },
+          "llama": {
+            "$ref": "#/components/schemas/LlamaStatusDto",
+            "description": "Configuration of the llama.cpp resolver."
+          },
+          "router": {
+            "$ref": "#/components/schemas/RouterStatusDto",
+            "description": "The state of the layered router."
+          }
+        }
+      },
+      "RouterStatusDto": {
+        "type": "object",
+        "description": "The state of the layered router.\n\nThe router has a stage per setting, and each stage names the reader it\nwould use right now. The settings page shows that state, so a stage\nthat cannot run its reader says so before a turn depends on it.",
+        "required": [
+          "fastPath",
+          "retrieve",
+          "decide",
+          "extract",
+          "topK",
+          "floor",
+          "margin",
+          "lexicalWeight",
+          "denseWeight",
+          "embedModel",
+          "embedSource",
+          "embedLocalModel",
+          "rerankModel",
+          "localDevice",
+          "activeLocalDevice",
+          "local",
+          "phraseGate",
+          "listMatch",
+          "listFloor",
+          "embeddingsReachable"
+        ],
+        "properties": {
+          "activeLocalDevice": {
+            "type": "string",
+            "description": "The device a built in model of the router would run on now."
+          },
+          "decide": {
+            "type": "string",
+            "description": "How the decision pass chooses one of the short list."
+          },
+          "denseWeight": {
+            "type": "number",
+            "format": "float",
+            "description": "Weight of the embeddings of the catalog."
+          },
+          "embedLocalModel": {
+            "type": "string",
+            "description": "Identifier of the built in embedding model."
+          },
+          "embedModel": {
+            "type": "string",
+            "description": "Model name the embedding server answers to."
+          },
+          "embedSource": {
+            "type": "string",
+            "description": "Where the retrieval stage and the list matcher read the vectors."
+          },
+          "embeddingsDetail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the model server answers with no embeddings, or null."
+          },
+          "embeddingsReachable": {
+            "type": "boolean",
+            "description": "Whether the model server answers the router with embeddings."
+          },
+          "extract": {
+            "type": "string",
+            "description": "How the values of the entities of the chosen intent are read."
+          },
+          "fastPath": {
+            "type": "boolean",
+            "description": "Whether the deterministic pass reads the message first."
+          },
+          "floor": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest score the decision pass accepts."
+          },
+          "lexicalWeight": {
+            "type": "number",
+            "format": "float",
+            "description": "Weight of the words of the catalog."
+          },
+          "listFloor": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest cosine similarity an embedding match of a value needs."
+          },
+          "listMatch": {
+            "type": "string",
+            "description": "How a mention is read against the values of an entity."
+          },
+          "local": {
+            "$ref": "#/components/schemas/LocalStoreDto",
+            "description": "State of the built in models of the router."
+          },
+          "localDevice": {
+            "type": "string",
+            "description": "The device a built in model of the router runs on."
+          },
+          "margin": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest distance between the best and the second best."
+          },
+          "phraseGate": {
+            "type": "boolean",
+            "description": "Whether a phrase counts only when the message shares its action."
+          },
+          "rerankModel": {
+            "type": "string",
+            "description": "Identifier of the built in reranker."
+          },
+          "retrieve": {
+            "type": "string",
+            "description": "The evidence the retrieval pass ranks the catalog with."
+          },
+          "topK": {
+            "type": "integer",
+            "description": "Size of the short list the retrieval pass keeps.",
+            "minimum": 0
+          }
+        }
+      },
+      "ScriptPreviewDto": {
+        "type": "object",
+        "description": "Reply of `POST /api/v1/intents/script/preview`.\n\nThe settings page shows the values a script answers with, so a user\nwho writes one reads the list before it reaches a turn.",
+        "required": [
+          "values",
+          "durationMs"
+        ],
+        "properties": {
+          "durationMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How long the script ran, in milliseconds.",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the script did not answer, or none when it did."
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The exit code of the script, or none when it did not start."
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values the script wrote, in the order it wrote them."
+          }
+        }
+      },
+      "ScriptPreviewWriteDto": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/intents/script/preview`.",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The shell command the daemon runs for the preview."
+          }
+        }
+      },
+      "SettingsDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/settings` and `PUT /api/v1/settings`.",
+        "required": [
+          "queueEnabled",
+          "resolverBackend",
+          "resolverBaseUrl",
+          "resolverModel",
+          "glinerModel",
+          "glinerDevice",
+          "glinerThreshold",
+          "routerFastPath",
+          "routerRetrieve",
+          "routerDecide",
+          "routerExtract",
+          "routerTopK",
+          "routerFloor",
+          "routerMargin",
+          "routerLexicalWeight",
+          "routerDenseWeight",
+          "routerEmbedModel",
+          "routerModelsDir",
+          "routerEmbedSource",
+          "routerEmbedLocalModel",
+          "routerRerankModel",
+          "routerLocalDevice",
+          "routerPhraseGate",
+          "routerListMatch",
+          "routerListFloor",
+          "previewSentences"
+        ],
+        "properties": {
+          "glinerDevice": {
+            "type": "string",
+            "description": "The device a GLiNER model runs on."
+          },
+          "glinerModel": {
+            "type": "string",
+            "description": "Identifier of the built in GLiNER model."
+          },
+          "glinerThreshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest probability a GLiNER label needs to count."
+          },
+          "previewSentences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The sentences the settings page tries against the resolver.\n\nThe sentences are the tests of a user and not a setting of the\npipeline, so they are stored with the settings the page shows and\nnever reach a turn."
+          },
+          "queueEnabled": {
+            "type": "boolean",
+            "description": "Whether the queue stores messages."
+          },
+          "resolverBackend": {
+            "type": "string",
+            "description": "The engine that reads the intent of a message."
+          },
+          "resolverBaseUrl": {
+            "type": "string",
+            "description": "Base URL of the intent resolver."
+          },
+          "resolverModel": {
+            "type": "string",
+            "description": "Model name the intent resolver asks the server for."
+          },
+          "routerDecide": {
+            "type": "string",
+            "description": "How the decision pass chooses one of the short list."
+          },
+          "routerDenseWeight": {
+            "type": "number",
+            "format": "float",
+            "description": "Weight of the embeddings of the catalog."
+          },
+          "routerEmbedLocalModel": {
+            "type": "string",
+            "description": "Identifier of the built in embedding model."
+          },
+          "routerEmbedModel": {
+            "type": "string",
+            "description": "Model name the embedding server answers to."
+          },
+          "routerEmbedSource": {
+            "type": "string",
+            "description": "Where the retrieval stage and the list matcher read the vectors."
+          },
+          "routerExtract": {
+            "type": "string",
+            "description": "How the values of the entities of the chosen intent are read."
+          },
+          "routerFastPath": {
+            "type": "boolean",
+            "description": "Whether the deterministic pass of the router reads the message first."
+          },
+          "routerFloor": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest score the decision pass accepts."
+          },
+          "routerLexicalWeight": {
+            "type": "number",
+            "format": "float",
+            "description": "Weight of the words of the catalog."
+          },
+          "routerListFloor": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest cosine similarity an embedding match of a value needs."
+          },
+          "routerListMatch": {
+            "type": "string",
+            "description": "How a mention is read against the values of an entity."
+          },
+          "routerLocalDevice": {
+            "type": "string",
+            "description": "The device a built in model of the router runs on."
+          },
+          "routerMargin": {
+            "type": "number",
+            "format": "float",
+            "description": "Smallest distance between the best and the second best."
+          },
+          "routerModelsDir": {
+            "type": "string",
+            "description": "Directory that holds the downloaded models of the router."
+          },
+          "routerPhraseGate": {
+            "type": "boolean",
+            "description": "Whether a phrase counts only when the message shares its action."
+          },
+          "routerRerankModel": {
+            "type": "string",
+            "description": "Identifier of the built in reranker."
+          },
+          "routerRetrieve": {
+            "type": "string",
+            "description": "The evidence the retrieval pass ranks the catalog with."
+          },
+          "routerTopK": {
+            "type": "integer",
+            "description": "Size of the short list the retrieval pass keeps.",
+            "minimum": 0
+          }
+        }
+      },
+      "SettingsUpdateDto": {
+        "type": "object",
+        "description": "Body of `PUT /api/v1/settings`.\nA null field keeps the stored value.",
+        "properties": {
+          "glinerDevice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device a GLiNER model runs on."
+          },
+          "glinerModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identifier of the built in GLiNER model."
+          },
+          "glinerThreshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Smallest probability a GLiNER label needs to count."
+          },
+          "previewSentences": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The sentences the settings page tries against the resolver.\n\nThe list is written whole, because the page adds and removes one\nsentence at a time and always knows the list it wants to keep."
+          },
+          "queueEnabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the queue stores messages."
+          },
+          "resolverBackend": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The engine that reads the intent of a message."
+          },
+          "resolverBaseUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base URL of the intent resolver."
+          },
+          "resolverModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model name the intent resolver asks the server for."
+          },
+          "routerDecide": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the decision pass chooses one of the short list."
+          },
+          "routerDenseWeight": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Weight of the embeddings of the catalog."
+          },
+          "routerEmbedLocalModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identifier of the built in embedding model."
+          },
+          "routerEmbedModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model name the embedding server answers to."
+          },
+          "routerEmbedSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the retrieval stage and the list matcher read the vectors."
+          },
+          "routerExtract": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How the values of the entities of the chosen intent are read."
+          },
+          "routerFastPath": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the deterministic pass of the router reads the message first."
+          },
+          "routerFloor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Smallest score the decision pass accepts."
+          },
+          "routerLexicalWeight": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Weight of the words of the catalog."
+          },
+          "routerListFloor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Smallest cosine similarity an embedding match of a value needs."
+          },
+          "routerListMatch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How a mention is read against the values of an entity."
+          },
+          "routerLocalDevice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device a built in model of the router runs on."
+          },
+          "routerMargin": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Smallest distance between the best and the second best."
+          },
+          "routerModelsDir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Directory that holds the downloaded models of the router."
+          },
+          "routerPhraseGate": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a phrase counts only when the message shares its action."
+          },
+          "routerRerankModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identifier of the built in reranker."
+          },
+          "routerRetrieve": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The evidence the retrieval pass ranks the catalog with."
+          },
+          "routerTopK": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Size of the short list the retrieval pass keeps.",
+            "minimum": 0
+          }
+        }
+      },
+      "StatusDto": {
+        "type": "object",
+        "description": "Reply of `GET /api/v1/status`.",
+        "required": [
+          "state",
+          "since",
+          "version"
+        ],
+        "properties": {
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon entered the state, in ISO 8601."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DaemonStateDto",
+            "description": "Current daemon state."
+          },
+          "version": {
+            "type": "string",
+            "description": "Daemon version."
+          }
+        }
+      },
+      "StopReasonDto": {
+        "type": "string",
+        "description": "Reason why the daemon left the Listening state.",
+        "enum": [
+          "SilenceTimeout",
+          "UserStopped",
+          "WakeDetected",
+          "Error"
+        ]
+      },
+      "SystemEventDto": {
+        "type": "object",
+        "description": "One event of the socket stream.",
+        "required": [
+          "at",
+          "payload"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon emitted the event, in ISO 8601."
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SystemEventPayloadDto",
+            "description": "Payload of the event, tagged by the backend variant name."
+          }
+        }
+      },
+      "SystemEventPayloadDto": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "timestamp",
+              "type"
+            ],
+            "properties": {
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "WakeDetected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ListeningStarted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason",
+              "type"
+            ],
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/StopReasonDto"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ListeningStopped"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "TranscriptInterim"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "TranscriptFinal"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "original",
+              "corrected",
+              "type"
+            ],
+            "properties": {
+              "corrected": {
+                "type": "string"
+              },
+              "original": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "TranscriptCorrected"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Token the resolver read from the model while it decides.",
+            "required": [
+              "delta",
+              "type"
+            ],
+            "properties": {
+              "delta": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "IntentThinking"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "intent",
+              "engine",
+              "type"
+            ],
+            "properties": {
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "float"
+              },
+              "engine": {
+                "type": "string",
+                "description": "The engine that chose the intent."
+              },
+              "intent": {
+                "type": "string"
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The model that engine ran, or null when the daemon cannot name it."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "IntentResolved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One value the resolver read for an entity of the chosen intent.",
+            "required": [
+              "engine",
+              "entities",
+              "type"
+            ],
+            "properties": {
+              "engine": {
+                "type": "string",
+                "description": "The engine that read the values."
+              },
+              "entities": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MessageEntityDto"
+                },
+                "description": "The entities with the values the engine read."
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The model that engine ran, or null when the daemon cannot name it."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "IntentValuesRead"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "IntentNotFound"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "intent",
+              "command",
+              "type"
+            ],
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ExecutionStarted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "One line the command of an intent wrote to its output.",
+            "required": [
+              "stream",
+              "line",
+              "type"
+            ],
+            "properties": {
+              "line": {
+                "type": "string"
+              },
+              "stream": {
+                "$ref": "#/components/schemas/OutputStreamDto"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ExecutionOutput"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "intent",
+              "exit_code",
+              "duration_ms",
+              "output",
+              "type"
+            ],
+            "properties": {
+              "duration_ms": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "exit_code": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "intent": {
+                "type": "string"
+              },
+              "output": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ExecutionCompleted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "intent",
+              "error",
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ExecutionFailed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Queue event emitted when a chat message is stored.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MessageQueued"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Queue event emitted when the daemon replies.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MessageReplied"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Payload of a `SystemEventDto`."
+      }
+    }
+  }
+}

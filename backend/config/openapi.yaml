@@ -1,916 +1,2140 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Alice Voice Backend API
-  version: 0.1.0
   description: REST and socket contract owned by the backend. Frontend copies DTOs from this file.
+  license:
+    name: ''
+  version: 0.1.0
 servers:
-  - url: http://127.0.0.1:8787
-    description: Local daemon
+- url: http://127.0.0.1:8787
+  description: Local daemon
 paths:
   /api/health:
     get:
-      summary: Health of the daemon
+      tags:
+      - system
+      summary: Reply of `GET /api/health` and `GET /health`.
+      operationId: health_handler
       responses:
         '200':
           description: Health reply
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/HealthDto' }
-  /health:
-    get:
-      summary: Health alias
-      responses:
-        '200':
-          description: Health reply
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/HealthDto' }
-  /api/v1/status:
-    get:
-      summary: Current daemon status
-      responses:
-        '200':
-          description: Status reply
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/StatusDto' }
-  /api/v1/conversations:
-    get:
-      summary: List conversations, most recently updated first
-      parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
-      responses:
-        '200':
-          description: Conversation list
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ConversationListDto' }
-  /api/v1/conversations/{id}:
-    get:
-      summary: Read one conversation with its full message history
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '200':
-          description: Conversation detail
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ConversationDetailDto' }
-        '404':
-          description: Conversation not found
-  /api/v1/intents:
-    get:
-      summary: List the intent configuration, in name order
-      responses:
-        '200':
-          description: Intent list
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/IntentListDto' }
-    post:
-      summary: Create one intent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/IntentWriteDto' }
-      responses:
-        '201':
-          description: Created intent
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/IntentDto' }
-        '400':
-          description: Invalid input
-        '409':
-          description: The name is already in use
-  /api/v1/intents/{id}:
-    put:
-      summary: Replace one intent and its entity set
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/IntentWriteDto' }
-      responses:
-        '200':
-          description: Updated intent
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/IntentDto' }
-        '400':
-          description: Invalid input
-        '404':
-          description: Intent not found
-        '409':
-          description: The name is already in use
-    delete:
-      summary: Delete one intent and its entities
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '204':
-          description: Deleted
-        '404':
-          description: Intent not found
-  /api/v1/intents/script/preview:
-    post:
-      summary: Run the script of a script entity
-      description: >-
-        Runs the script and answers with the values it wrote, so the settings page
-        shows the list of a script entity before a turn reads it. The preview ignores
-        the list the daemon holds in memory and runs the script of this moment.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ScriptPreviewWriteDto' }
-      responses:
-        '200':
-          description: The values the script answered with
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ScriptPreviewDto' }
-  /api/v1/intents/examples:
-    post:
-      summary: Add the example intents this catalog does not hold yet
-      responses:
-        '200':
-          description: The whole catalog after the write
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/IntentListDto' }
+              schema:
+                $ref: '#/components/schemas/HealthDto'
   /api/v1/chat:
     post:
-      summary: Handle one turn and return it
-      description: >-
-        The daemon resolves the intent of the message with the local model, runs the
-        command of that intent, and answers. The stages stream on /api/v1/events while
-        the request runs. The daemon starts a conversation when conversationId is null,
-        and takes the title from the first message. The daemon stores nothing when the
-        queue is off, and reports stored false, but it still resolves and runs the
-        intent.
+      tags:
+      - chat
+      summary: Reply of `POST /api/v1/chat`.
+      description: |-
+        The daemon handles the message while the request runs: it resolves the
+        intent, runs its command, and answers. Every stage streams on the
+        socket stream, so the interface shows the turn while it runs.
+
+        The daemon stores the turn in a conversation when the queue is on. It
+        answers without a store when the queue is off.
+      operationId: chat_handler
       requestBody:
-        required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ChatRequestDto' }
+            schema:
+              $ref: '#/components/schemas/ChatRequestDto'
+        required: true
       responses:
         '201':
           description: Handled turn
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ChatReplyDto' }
+              schema:
+                $ref: '#/components/schemas/ChatReplyDto'
         '400':
           description: Invalid input
         '404':
           description: Conversation not found
         '413':
           description: Message too long
-  /api/v1/events:
+  /api/v1/conversations:
     get:
-      summary: WebSocket event stream
-      description: Upgrade to WebSocket. Backend pushes SystemEventDto as JSON.
-      responses:
-        '101': { description: Switching Protocols }
-  /api/v1/settings:
-    get:
-      summary: Read the settings of the daemon
+      tags:
+      - conversations
+      summary: Reply of `GET /api/v1/conversations`.
+      operationId: list_conversations_handler
+      parameters:
+      - name: limit
+        in: query
+        description: Maximum items to return.
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
       responses:
         '200':
-          description: Stored settings
+          description: Conversation list
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SettingsDto' }
-    put:
-      summary: Update the settings of the daemon
-      description: A field the caller does not send keeps its stored value.
-      requestBody:
+              schema:
+                $ref: '#/components/schemas/ConversationListDto'
+  /api/v1/conversations/{id}:
+    get:
+      tags:
+      - conversations
+      summary: Reply of `GET /api/v1/conversations/{id}`.
+      operationId: get_conversation_handler
+      parameters:
+      - name: id
+        in: path
+        description: Conversation id
         required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/SettingsUpdateDto' }
+        schema:
+          type: string
+          format: uuid
       responses:
         '200':
-          description: Stored settings
+          description: Conversation detail
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SettingsDto' }
-        '400':
-          description: Invalid input
+              schema:
+                $ref: '#/components/schemas/ConversationDetailDto'
+        '404':
+          description: Conversation not found
   /api/v1/dependencies:
     get:
-      summary: Read which places the settings depend on answer
-      description: A setting belongs to a place that stores it and to a service that makes it work. The reply needs no database, so the settings page can tell a database that is down from a daemon that is down, and it can disable a control whose place does not answer.
+      tags:
+      - system
+      summary: Reply of `GET /api/v1/dependencies`.
+      operationId: get_dependencies_handler
       responses:
         '200':
           description: State of the dependencies
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DependenciesDto' }
-  /api/v1/resolver:
+              schema:
+                $ref: '#/components/schemas/DependenciesDto'
+  /api/v1/events:
     get:
-      summary: Read the state of the intent resolver
-      description: Reports which engine reads a message, the built in models with their install state, the devices this build offers, and the number of labels the intent configuration adds up to.
+      tags:
+      - events
+      summary: Upgrade `GET /api/v1/events` to a WebSocket.
+      operationId: events_handler
+      responses:
+        '101':
+          description: Switching Protocols
+  /api/v1/intents:
+    get:
+      tags:
+      - intents
+      summary: Reply of `GET /api/v1/intents`.
+      operationId: list_intents_handler
       responses:
         '200':
-          description: State of the resolver
+          description: Intent list
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverStatusDto' }
-  /api/v1/resolver/preview:
+              schema:
+                $ref: '#/components/schemas/IntentListDto'
     post:
-      summary: Read one message without running anything
-      description: >-
-        The daemon reads the message with the stored settings and runs no command,
-        and it publishes no stage on the event stream. The reply carries the metadata
-        of a stored turn, so the route of a sentence the user tries reads the same way
-        as the route of a message the daemon handled.
+      tags:
+      - intents
+      summary: Reply of `POST /api/v1/intents`.
+      operationId: create_intent_handler
       requestBody:
-        required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ResolverPreviewRequestDto' }
+            schema:
+              $ref: '#/components/schemas/IntentWriteDto'
+        required: true
       responses:
-        '200':
-          description: How the resolver would read the message
+        '201':
+          description: Created intent
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverPreviewDto' }
+              schema:
+                $ref: '#/components/schemas/IntentDto'
         '400':
           description: Invalid input
-        '413':
-          description: Message too long
-  /api/v1/resolver/gliner/models/{id}/download:
+        '409':
+          description: The name is already in use
+  /api/v1/intents/examples:
     post:
-      summary: Download a built in GLiNER model
-      description: The download runs in the background. The reply carries the state to poll.
+      tags:
+      - intents
+      summary: Reply of `POST /api/v1/intents/examples`.
+      description: |-
+        The endpoint adds the example intents that this catalog does not hold
+        yet and answers with the whole catalog, so the settings page shows the
+        new intents without a second read.
+      operationId: create_examples_handler
+      responses:
+        '200':
+          description: The whole catalog after the write
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntentListDto'
+  /api/v1/intents/script/preview:
+    post:
+      tags:
+      - intents
+      summary: Reply of `POST /api/v1/intents/script/preview`.
+      description: |-
+        The settings page runs the script of an entity here, so a user reads
+        the values a script answers with before a turn reads them.
+      operationId: preview_script_handler
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptPreviewWriteDto'
+        required: true
+      responses:
+        '200':
+          description: The values the script answered with
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptPreviewDto'
+  /api/v1/intents/{id}:
+    put:
+      tags:
+      - intents
+      summary: Reply of `PUT /api/v1/intents/{id}`.
+      operationId: update_intent_handler
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, example: gliner_small-v2.1 }
+      - name: id
+        in: path
+        description: Intent id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntentWriteDto'
+        required: true
+      responses:
+        '200':
+          description: Updated intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntentDto'
+        '400':
+          description: Invalid input
+        '404':
+          description: Intent not found
+        '409':
+          description: The name is already in use
+    delete:
+      tags:
+      - intents
+      summary: Reply of `DELETE /api/v1/intents/{id}`.
+      operationId: delete_intent_handler
+      parameters:
+      - name: id
+        in: path
+        description: Intent id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: Intent not found
+  /api/v1/resolver:
+    get:
+      tags:
+      - resolver
+      summary: Reply of `GET /api/v1/resolver`.
+      operationId: get_resolver_handler
       responses:
         '200':
           description: State of the resolver
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverStatusDto' }
-        '404':
-          description: The daemon knows no model with that identifier
-        '409':
-          description: A download already runs
+              schema:
+                $ref: '#/components/schemas/ResolverStatusDto'
   /api/v1/resolver/gliner/models/{id}:
     delete:
-      summary: Remove the files of a built in GLiNER model
+      tags:
+      - resolver
+      summary: Reply of `DELETE /api/v1/resolver/gliner/models/{id}`.
+      operationId: delete_gliner_model_handler
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, example: gliner_small-v2.1 }
+      - name: id
+        in: path
+        description: 'Model id, example: gliner_small-v2.1'
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: State of the resolver
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverStatusDto' }
+              schema:
+                $ref: '#/components/schemas/ResolverStatusDto'
         '404':
           description: The daemon knows no model with that identifier
-  /api/v1/resolver/local/models/{id}/download:
+  /api/v1/resolver/gliner/models/{id}/download:
     post:
-      summary: Download a built in model of the router
-      description: >-
-        The download runs in the background. The reply carries the state to
-        poll, in the router section of the reply.
+      tags:
+      - resolver
+      summary: Reply of `POST /api/v1/resolver/gliner/models/{id}/download`.
+      description: |-
+        The download runs in the background, so the reply carries the state the
+        settings page polls while it runs.
+      operationId: download_gliner_model_handler
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, example: bge-small-en-v1.5 }
+      - name: id
+        in: path
+        description: 'Model id, example: gliner_small-v2.1'
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: State of the resolver
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverStatusDto' }
+              schema:
+                $ref: '#/components/schemas/ResolverStatusDto'
         '404':
           description: The daemon knows no model with that identifier
         '409':
           description: A download already runs
   /api/v1/resolver/local/models/{id}:
     delete:
-      summary: Remove the files of a built in model of the router
+      tags:
+      - resolver
+      summary: Reply of `DELETE /api/v1/resolver/local/models/{id}`.
+      operationId: delete_local_model_handler
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, example: bge-small-en-v1.5 }
+      - name: id
+        in: path
+        description: 'Model id, example: bge-small-en-v1.5'
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: State of the resolver
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolverStatusDto' }
+              schema:
+                $ref: '#/components/schemas/ResolverStatusDto'
         '404':
           description: The daemon knows no model with that identifier
+  /api/v1/resolver/local/models/{id}/download:
+    post:
+      tags:
+      - resolver
+      summary: Reply of `POST /api/v1/resolver/local/models/{id}/download`.
+      description: |-
+        The download runs in the background, so the reply carries the state the
+        settings page polls while it runs.
+      operationId: download_local_model_handler
+      parameters:
+      - name: id
+        in: path
+        description: 'Model id, example: bge-small-en-v1.5'
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: State of the resolver
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolverStatusDto'
+        '404':
+          description: The daemon knows no model with that identifier
+        '409':
+          description: A download already runs
+  /api/v1/resolver/preview:
+    post:
+      tags:
+      - resolver
+      summary: Reply of `POST /api/v1/resolver/preview`.
+      description: |-
+        The preview reads one message with the stored settings and runs
+        nothing, so the settings page can show the route of a sentence before
+        the user sends it. The reply carries the metadata of a stored turn, so
+        the route of a sentence and the route of a message the daemon really
+        handled read the same way.
+      operationId: preview_message_handler
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolverPreviewRequestDto'
+        required: true
+      responses:
+        '200':
+          description: How the resolver would read the message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolverPreviewDto'
+        '400':
+          description: Invalid input
+        '413':
+          description: Message too long
+  /api/v1/settings:
+    get:
+      tags:
+      - settings
+      summary: Reply of `GET /api/v1/settings`.
+      operationId: get_settings_handler
+      responses:
+        '200':
+          description: Stored settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsDto'
+    put:
+      tags:
+      - settings
+      summary: Reply of `PUT /api/v1/settings`.
+      description: |-
+        A field the caller does not send keeps its stored value, so a caller
+        may change one setting without sending the others.
+      operationId: put_settings_handler
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdateDto'
+        required: true
+      responses:
+        '200':
+          description: Stored settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsDto'
+        '400':
+          description: Invalid input
+  /api/v1/status:
+    get:
+      tags:
+      - system
+      summary: Reply of `GET /api/v1/status`.
+      operationId: status_handler
+      responses:
+        '200':
+          description: Status reply
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusDto'
+  /health:
+    get:
+      tags:
+      - system
+      summary: Alias of `GET /api/health` at `GET /health`.
+      operationId: health_alias_handler
+      responses:
+        '200':
+          description: Health reply
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDto'
 components:
   schemas:
-    DaemonStateDto:
-      type: string
-      enum: [Idle, Listening, Transcribing, Resolving, Executing, Error]
-    StopReasonDto:
-      type: string
-      enum: [SilenceTimeout, UserStopped, WakeDetected, Error]
-    EntityKindDto:
-      type: string
-      enum: [open, closed, script]
-      description: An open entity takes a value the user says freely. A closed entity takes one value of its list. A script entity takes one value of a list a script answers with, which the daemon runs and keeps in memory.
-    OutputStreamDto:
-      type: string
-      enum: [stdout, stderr]
-    StatusDto:
-      type: object
-      required: [state, since, version]
-      properties:
-        state: { $ref: '#/components/schemas/DaemonStateDto' }
-        since: { type: string, format: date-time }
-        version: { type: string }
-    HealthDto:
-      type: object
-      required: [status, version]
-      properties:
-        status: { type: string, example: ok }
-        version: { type: string }
-    ChatRoleDto:
-      type: string
-      enum: [user, assistant]
     ChatMessageDto:
       type: object
-      required: [id, conversationId, role, text, createdAt, intentId, intentName, confidence, meta]
+      description: One stored turn of a conversation.
+      required:
+      - id
+      - role
+      - text
+      - createdAt
       properties:
-        id: { type: string, format: uuid }
-        conversationId: { type: string, format: uuid, nullable: true, description: Null when the queue is off }
-        role: { $ref: '#/components/schemas/ChatRoleDto' }
-        text: { type: string }
-        createdAt: { type: string, format: date-time }
-        intentId: { type: string, nullable: true, description: Identifier of the resolved intent }
-        intentName: { type: string, nullable: true, description: Name of the resolved intent }
-        confidence: { type: number, nullable: true, minimum: 0, maximum: 1, description: Probability of the chosen option, null when the model sent none }
-        meta: { $ref: '#/components/schemas/MessageMetaDto' }
-    ResolverPreviewRequestDto:
-      type: object
-      required: [text]
-      properties:
-        text: { type: string, description: The message to read }
-    ResolverPreviewDto:
-      type: object
-      required: [text, matched, intent, confidence, reply, meta]
-      properties:
-        text: { type: string, description: The message the daemon read }
-        matched: { type: boolean, description: True when the resolver met an intent }
-        intent: { type: string, nullable: true, description: The name of the intent the resolver met }
-        confidence: { type: number, nullable: true, minimum: 0, maximum: 1, description: Probability of the choice }
-        reply: { type: string, description: The reply the daemon would store, empty when the turn would run its command }
-        meta: { $ref: '#/components/schemas/MessageMetaDto' }
-    MessageMetaDto:
-      type: object
-      nullable: true
-      description: >-
-        How the daemon read and ran one turn, null when it read nothing. A
-        turn the resolver read and chose no intent for keeps the engine and
-        the model of that read, so the surface always names who read the
-        message.
-      required: [intentEngine, intentModel, valueEngine, valueModel, stage, candidates, entities, route, command, exitCode, durationMs]
-      properties:
-        intentEngine: { $ref: '#/components/schemas/ResolverEngineDto' }
-        intentModel: { type: string, nullable: true, description: The model the engine that chose the intent ran }
-        valueEngine: { $ref: '#/components/schemas/ResolverEngineDto' }
-        valueModel: { type: string, nullable: true, description: The model the engine that read the values ran }
-        stage:
-          allOf: [ { $ref: '#/components/schemas/RouterStageDto' } ]
-          nullable: true
-          description: The stage of the layered router that decided the turn, or null when the backend is not the router
-        candidates:
-          type: array
-          description: The intents the retrieval stage kept for this turn, best first
-          items:
-            type: object
-            required: [name, score, evidence]
-            properties:
-              name: { type: string }
-              score: { type: number, minimum: 0, maximum: 1 }
-              evidence: { type: string, example: words }
-        entities:
-          type: array
-          description: The entities of the intent with the values the daemon read and the reader that read each of them
-          items:
-            type: object
-            required: [name, value, source, engine, model, read, score]
-            properties:
-              name: { type: string }
-              value: { type: string, description: Empty when the resolver read no value }
-              source: { type: string, nullable: true, enum: [fast_path, list, embedding, spans, model, lists, null], description: The reader that read the value, null when the daemon read none }
-              engine: { $ref: '#/components/schemas/ResolverEngineDto' }
-              model: { type: string, nullable: true, description: The model the reader ran }
-              read: { type: string, nullable: true, description: What the reader read before the value was matched to an entry of a list }
-              score: { type: number, nullable: true, minimum: 0, maximum: 1, description: The similarity an embedding match read }
-        route:
-          allOf: [ { $ref: '#/components/schemas/MessageRouteDto' } ]
-          nullable: true
-          description: How the layered router read the turn stage by stage, null when the backend is not the router
-        command: { type: string, nullable: true, description: The command after the daemon put the values in }
-        exitCode: { type: integer, nullable: true, description: Null when no command ran }
-        durationMs: { type: integer, nullable: true, description: Null when no command ran }
-    MessageRouteDto:
-      type: object
-      description: >-
-        The route of one turn through the layered router: every stage the
-        turn passed, in the order it ran them, with the reader each stage
-        ran and the short list it read.
-      required: [stage, matched, reason, steps]
-      properties:
-        stage: { $ref: '#/components/schemas/RouterStageDto' }
-        matched: { type: boolean, description: True when the turn met an intent }
-        reason: { type: string, nullable: true, description: Why the router refused, null when it chose }
-        steps:
-          type: array
-          description: The stages the turn passed, in the order they ran
-          items: { $ref: '#/components/schemas/MessageRouteStepDto' }
-    MessageRouteStepDto:
-      type: object
-      required: [stage, outcome, reader, model, detail, candidates, durationMs]
-      properties:
-        stage: { type: string, enum: [fast_path, retrieve, decide, extract] }
-        outcome: { type: string, enum: [matched, refused, passed, fell_back, skipped] }
-        reader: { type: string, example: rules, description: The reader the stage ran }
-        model: { type: string, nullable: true, description: The model the reader ran, null when it ran none }
-        detail: { type: string, nullable: true, description: One sentence about what the stage read }
-        candidates:
-          type: array
-          description: The candidates the stage read, best first
-          items:
-            type: object
-            required: [name, score, evidence]
-            properties:
-              name: { type: string }
-              score: { type: number, minimum: 0, maximum: 1 }
-              evidence: { type: string, example: words }
-        durationMs: { type: integer, description: How long the stage took }
-    ResolverEngineDto:
-      type: string
-      nullable: true
-      enum: [llama, gliner, router]
-      description: >-
-        The engine that read one step of a turn. router is the layered router,
-        which reads a step in stages.
-    ConversationDto:
-      type: object
-      required: [id, title, createdAt, updatedAt]
-      properties:
-        id: { type: string, format: uuid }
-        title: { type: string, description: Generated from the first message }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    ConversationListDto:
-      type: object
-      required: [items]
-      properties:
-        items: { type: array, items: { $ref: '#/components/schemas/ConversationDto' } }
-    ConversationDetailDto:
-      type: object
-      required: [conversation, messages]
-      properties:
-        conversation: { $ref: '#/components/schemas/ConversationDto' }
-        messages: { type: array, items: { $ref: '#/components/schemas/ChatMessageDto' } }
-    ChatRequestDto:
-      type: object
-      required: [text]
-      properties:
-        text: { type: string, minLength: 1, maxLength: 4000 }
-        conversationId: { type: string, format: uuid, nullable: true, description: Null starts a new conversation }
+        confidence:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Resolver confidence between 0 and 1, or null.
+        conversationId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Conversation the message belongs to, or null when the queue is off.
+        createdAt:
+          type: string
+          format: date-time
+          description: Time the daemon stored the message, in ISO 8601.
+        id:
+          type: string
+          format: uuid
+          description: Stable message identifier.
+        intentId:
+          type:
+          - string
+          - 'null'
+          description: Resolved intent identifier, or null when none.
+        intentName:
+          type:
+          - string
+          - 'null'
+          description: Name of the resolved intent, or null when none.
+        meta:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/MessageMetaDto'
+            description: How the daemon read the turn, or null when it read nothing.
+        role:
+          $ref: '#/components/schemas/ChatRoleDto'
+          description: Speaker.
+        text:
+          type: string
+          description: Message text.
     ChatReplyDto:
       type: object
-      required: [stored, conversation, user, reply]
+      description: Reply of `POST /api/v1/chat`.
+      required:
+      - stored
+      - user
+      - reply
       properties:
-        stored: { type: boolean, description: False when the queue is off }
-        conversation: { allOf: [{ $ref: '#/components/schemas/ConversationDto' }], nullable: true }
-        user: { $ref: '#/components/schemas/ChatMessageDto' }
-        reply: { $ref: '#/components/schemas/ChatMessageDto' }
-    IntentEntityDto:
+        conversation:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/ConversationDto'
+            description: The conversation of the turn, or null when the queue is off.
+        reply:
+          $ref: '#/components/schemas/ChatMessageDto'
+          description: Daemon reply.
+        stored:
+          type: boolean
+          description: True when the daemon stored the turn, false when the queue is off.
+        user:
+          $ref: '#/components/schemas/ChatMessageDto'
+          description: Stored user message.
+    ChatRequestDto:
       type: object
-      required: [id, name, kind, values, script, required]
+      description: Body of `POST /api/v1/chat`.
+      required:
+      - text
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string, example: city }
-        kind: { $ref: '#/components/schemas/EntityKindDto' }
-        values: { type: array, items: { type: string }, description: Values of a closed entity, empty for an open one. A closed entity takes one of its values, an open entity takes the words of the message }
-        script: { type: string, nullable: true, description: Shell command that provides the values of a script entity, null for the other kinds }
-        required: { type: boolean, default: true, description: A required entity the daemon cannot read makes the turn ask the user for the value. An optional one lets the command run without it }
-    IntentDto:
+        conversationId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Conversation to append to. Null starts a new conversation.
+        text:
+          type: string
+          description: Text the user typed.
+    ChatRoleDto:
+      type: string
+      description: Speaker of one chat message.
+      enum:
+      - user
+      - assistant
+    ConversationDetailDto:
       type: object
-      required: [id, name, description, command, entities, examples, createdAt, updatedAt]
+      description: Reply of `GET /api/v1/conversations/{id}`.
+      required:
+      - conversation
+      - messages
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string, example: get weather }
-        description: { type: string, description: One sentence the resolver reads }
-        command: { type: string, description: "Shell command the daemon runs for the intent. A placeholder `{name}` names an entity of the intent: the daemon reads the value of that entity out of the message and runs the command with the value in place. A placeholder of a required entity the daemon could not read stops the run, and the daemon asks the user for the value. The placeholder of an optional entity the daemon could not read is removed." }
-        entities: { type: array, items: { $ref: '#/components/schemas/IntentEntityDto' } }
-        examples: { type: array, items: { type: string }, maxItems: 12, description: Phrases a user may say for this intent. The resolver reads them next to the name }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    IntentListDto:
+        conversation:
+          $ref: '#/components/schemas/ConversationDto'
+          description: The conversation.
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessageDto'
+          description: The full message history, oldest first.
+    ConversationDto:
       type: object
-      required: [items]
+      description: One conversation of the daemon. The conversation owns its message history.
+      required:
+      - id
+      - title
+      - createdAt
+      - updatedAt
       properties:
-        items: { type: array, items: { $ref: '#/components/schemas/IntentDto' } }
-    IntentEntityWriteDto:
+        createdAt:
+          type: string
+          format: date-time
+          description: Time the daemon created the conversation, in ISO 8601.
+        id:
+          type: string
+          format: uuid
+          description: Stable conversation identifier.
+        title:
+          type: string
+          description: Title the daemon generated from the first message.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time the daemon stored the last message, in ISO 8601.
+    ConversationListDto:
       type: object
-      required: [name, kind]
+      description: Reply of `GET /api/v1/conversations`.
+      required:
+      - items
       properties:
-        name: { type: string, maxLength: 40 }
-        kind: { $ref: '#/components/schemas/EntityKindDto' }
-        values: { type: array, items: { type: string, maxLength: 80 }, description: Required for a closed entity, ignored for the other kinds }
-        script: { type: string, maxLength: 2000, nullable: true, description: Required for a script entity, ignored for the other kinds }
-        required: { type: boolean, default: true, description: Whether the intent needs a value for this entity }
-    IntentWriteDto:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationDto'
+          description: Conversations, most recently updated first.
+    ConversationQuery:
       type: object
-      required: [name, description, command]
+      description: Query of `GET /api/v1/conversations`.
       properties:
-        name: { type: string, minLength: 1, maxLength: 60 }
-        description: { type: string, maxLength: 240 }
-        command: { type: string, minLength: 1, maxLength: 2000, description: "Shell command with one placeholder `{name}` per entity it needs, for example `curl -s \"wttr.in/{city}?format=3\"`" }
-        entities: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IntentEntityWriteDto' } }
-        examples: { type: array, maxItems: 12, items: { type: string, maxLength: 80 }, description: Phrases a user may say for this intent, one per entry }
-    ScriptPreviewWriteDto:
-      type: object
-      required: [script]
-      properties:
-        script: { type: string, minLength: 1, maxLength: 2000, description: Shell command the daemon runs for the preview }
-    ScriptPreviewDto:
-      type: object
-      required: [values, exitCode, durationMs, error]
-      properties:
-        values: { type: array, items: { type: string }, description: The values the script wrote, in the order it wrote them }
-        exitCode: { type: integer, nullable: true, description: The exit code of the script, null when it did not start }
-        durationMs: { type: integer }
-        error: { type: string, nullable: true, description: Why the script did not answer, or null when it did }
-    DependencyDto:
-      type: object
-      required: [key, label, reachable]
-      properties:
-        key: { type: string, example: database }
-        label: { type: string, example: Database }
-        reachable: { type: boolean }
-        detail: { type: string, nullable: true, description: Why it does not answer, or what it reports about itself }
-    LlamaDependencyDto:
-      type: object
-      required: [reachable, baseUrl, model, models]
-      properties:
-        reachable: { type: boolean }
-        detail: { type: string, nullable: true }
-        baseUrl: { type: string, example: http://127.0.0.1:8012/v1 }
-        model: { type: string, example: qwen3.5-4b }
-        models: { type: array, items: { type: string }, description: "The models the server offers, from GET <baseUrl>/models. Empty when the server is down" }
+        limit:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Maximum items to return.
+          minimum: 0
+    DaemonStateDto:
+      type: string
+      description: Daemon state that mirrors the backend state machine.
+      enum:
+      - Idle
+      - Listening
+      - Transcribing
+      - Resolving
+      - Executing
+      - Error
     DependenciesDto:
       type: object
-      required: [configured, database, llama, gliner]
+      description: |-
+        The state of the dependencies of the settings surface.
+
+        The reply needs no database, so the settings page can tell a database
+        that is down from a daemon that is down.
+      required:
+      - configured
+      - database
+      - llama
+      - gliner
       properties:
-        configured: { $ref: '#/components/schemas/SettingsDto' }
-        database: { $ref: '#/components/schemas/DependencyDto' }
-        llama: { $ref: '#/components/schemas/LlamaDependencyDto' }
-        gliner: { $ref: '#/components/schemas/DependencyDto' }
-    ResolverBackendDto:
-      type: string
-      enum: [router, llama, gliner, hybrid]
-      description: >-
-        router reads the message in stages (a deterministic pass, a retrieval
-        pass over the whole catalog, a decision over the short list it keeps,
-        and an extraction pass for the values of the intent that won), llama
-        reads the intent and the values with a llama.cpp server, gliner reads
-        both with the built in model, hybrid reads the intent with llama.cpp
-        and the values with GLiNER.
-    RouterStageDto:
-      type: string
-      enum: [fast_path, retrieve, rerank, none]
-      description: >-
-        The stage of the layered router that answered a turn. fast_path is
-        the deterministic pass, retrieve is the ranking of the catalog,
-        rerank is a model over the short list, and none is a refusal.
-    RetrieveEngineDto:
-      type: string
-      enum: [lexical, dense, hybrid]
-      description: The evidence the retrieval stage of the router ranks the catalog with.
-    DecideEngineDto:
-      type: string
-      enum: [score, rerank, generative]
-      description: >-
-        How the decision stage of the router chooses one of the short list.
-        score reads the ranking alone, rerank reads the message and every
-        candidate with a built in model, and generative reads only the short
-        list with the language model.
-    EmbedSourceDto:
-      type: string
-      enum: [server, local]
-      description: >-
-        Where the router reads the vectors of the catalog. server asks the
-        model server, and local runs a built in model in the daemon.
-    ExtractEngineDto:
-      type: string
-      enum: [lists, spans, generative]
-      description: How the extraction stage of the router reads the values of the chosen intent.
-    ListMatchDto:
-      type: string
-      enum: [lexical, dense, both]
-      description: How a mention is read against the values of an entity.
-    GlinerDeviceDto:
-      type: string
-      enum: [auto, cpu, cuda]
-      description: >-
-        The device a built in ONNX model runs on. `auto` takes the best device
-        this build and this machine offer. The built in GLiNER model and the
-        built in models of the router share the setting.
-    LocalModelDto:
+        configured:
+          $ref: '#/components/schemas/SettingsDto'
+          description: |-
+            The values the daemon starts from.
+            The settings page shows them while the database does not answer.
+        database:
+          $ref: '#/components/schemas/DependencyDto'
+          description: The database that stores every setting.
+        gliner:
+          $ref: '#/components/schemas/DependencyDto'
+          description: The built in GLiNER resolver.
+        llama:
+          $ref: '#/components/schemas/LlamaDependencyDto'
+          description: The llama.cpp server that reads intents and values.
+    DependencyDto:
       type: object
-      required: [id, name, note, role, sizeBytes, installed]
+      description: |-
+        One dependency a setting needs.
+
+        A setting belongs to a place that stores it and to a service that
+        makes it work. The settings page keeps a control usable only when
+        every place it needs answers, so the user never saves a value that
+        cannot take effect.
+      required:
+      - key
+      - label
+      - reachable
       properties:
-        id: { type: string, example: bge-small-en-v1.5 }
-        name: { type: string }
-        note: { type: string }
-        role: { type: string, enum: [embeddings, reranker] }
-        sizeBytes: { type: integer }
-        installed: { type: boolean }
-    LocalDownloadDto:
-      type: object
-      required: [model, receivedBytes, done]
-      properties:
-        model: { type: string }
-        receivedBytes: { type: integer }
-        totalBytes: { type: integer, nullable: true }
-        done: { type: boolean }
-        error: { type: string, nullable: true }
-    LocalStoreDto:
-      type: object
-      required: [modelsDir, models]
-      properties:
-        modelsDir: { type: string }
-        models: { type: array, items: { $ref: '#/components/schemas/LocalModelDto' } }
-        download: { allOf: [ { $ref: '#/components/schemas/LocalDownloadDto' } ], nullable: true }
-    GlinerModelDto:
-      type: object
-      required: [id, name, note, sizeBytes, installed]
-      properties:
-        id: { type: string, example: gliner_small-v2.1 }
-        name: { type: string }
-        note: { type: string }
-        sizeBytes: { type: integer }
-        installed: { type: boolean }
+        detail:
+          type:
+          - string
+          - 'null'
+          description: Why it does not answer, or what it reports about itself.
+        key:
+          type: string
+          description: Short key of the dependency, for example `database`.
+        label:
+          type: string
+          description: Name the settings page shows.
+        reachable:
+          type: boolean
+          description: Whether the dependency answers.
+    EntityKindDto:
+      type: string
+      description: The kind of one entity of an intent.
+      enum:
+      - open
+      - closed
+      - script
     GlinerDownloadDto:
       type: object
-      required: [model, receivedBytes, done]
+      description: The GLiNER download that runs right now.
+      required:
+      - model
+      - receivedBytes
+      - done
       properties:
-        model: { type: string }
-        receivedBytes: { type: integer }
-        totalBytes: { type: integer, nullable: true }
-        done: { type: boolean }
-        error: { type: string, nullable: true }
+        done:
+          type: boolean
+          description: Whether the download finished.
+        error:
+          type:
+          - string
+          - 'null'
+          description: The error that stopped the download, or null.
+        model:
+          type: string
+          description: Identifier of the model.
+        receivedBytes:
+          type: integer
+          format: int64
+          description: Bytes written so far.
+          minimum: 0
+        totalBytes:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Size the server announced, or null when it announced none.
+          minimum: 0
+    GlinerModelDto:
+      type: object
+      description: One GLiNER model the daemon can download.
+      required:
+      - id
+      - name
+      - note
+      - sizeBytes
+      - installed
+      properties:
+        id:
+          type: string
+          description: Identifier of the model, for example `gliner_small-v2.1`.
+        installed:
+          type: boolean
+          description: Whether the model is on disk.
+        name:
+          type: string
+          description: Name the settings page shows.
+        note:
+          type: string
+          description: One sentence about the model.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Size of the download in bytes.
+          minimum: 0
     GlinerStoreDto:
       type: object
-      required: [model, device, activeDevice, installed, threshold, modelsDir, devices, cudaBuild, models]
+      description: State of the built in GLiNER models.
+      required:
+      - model
+      - device
+      - activeDevice
+      - installed
+      - threshold
+      - modelsDir
+      - devices
+      - cudaBuild
+      - models
       properties:
-        model: { type: string }
-        device: { $ref: '#/components/schemas/GlinerDeviceDto' }
-        activeDevice: { type: string, description: The device the selected model would run on now }
-        installed: { type: boolean }
-        threshold: { type: number, minimum: 0, maximum: 1 }
-        modelsDir: { type: string }
-        devices: { type: array, items: { type: string }, description: The devices this build and this machine offer, best first }
-        cudaBuild: { type: boolean, description: Whether this build carries CUDA support }
-        models: { type: array, items: { $ref: '#/components/schemas/GlinerModelDto' } }
-        download: { allOf: [ { $ref: '#/components/schemas/GlinerDownloadDto' } ], nullable: true }
-    LlamaStatusDto:
+        activeDevice:
+          type: string
+          description: The device the selected model would run on now.
+        cudaBuild:
+          type: boolean
+          description: Whether this build carries CUDA support.
+        device:
+          type: string
+          description: The device the selected model should run on.
+        devices:
+          type: array
+          items:
+            type: string
+          description: Devices this build and this machine can run on, best first.
+        download:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/GlinerDownloadDto'
+            description: The download that runs right now, or null.
+        installed:
+          type: boolean
+          description: Whether the selected model is installed.
+        model:
+          type: string
+          description: Identifier of the selected model.
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlinerModelDto'
+          description: Every model the daemon can download.
+        modelsDir:
+          type: string
+          description: Directory that holds the downloaded models.
+        threshold:
+          type: number
+          format: float
+          description: Smallest probability a label needs to count.
+    HealthDto:
       type: object
-      required: [baseUrl, model, intentLimit]
+      description: Health reply of `GET /api/health`.
+      required:
+      - status
+      - version
       properties:
-        baseUrl: { type: string }
-        model: { type: string }
-        intentLimit: { type: integer, description: The number of intents the llama.cpp resolver offers }
+        status:
+          type: string
+          description: Service status.
+        version:
+          type: string
+          description: Daemon version.
+    IntentDto:
+      type: object
+      description: One intent of the daemon. An intent runs one shell command.
+      required:
+      - id
+      - name
+      - description
+      - command
+      - entities
+      - createdAt
+      - updatedAt
+      properties:
+        command:
+          type: string
+          description: Shell command the daemon runs for this intent.
+        createdAt:
+          type: string
+          format: date-time
+          description: Time the daemon created the intent, in ISO 8601.
+        description:
+          type: string
+          description: What the intent does, in one sentence. The resolver reads it.
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntentEntityDto'
+          description: The entities the intent reads from the message.
+        examples:
+          type: array
+          items:
+            type: string
+          description: |-
+            Phrases a user may say for this intent, one per entry.
+
+            The resolver reads them next to the name, so "launch firefox"
+            points at `open application` as well as the name does.
+        id:
+          type: string
+          format: uuid
+          description: Stable intent identifier.
+        name:
+          type: string
+          description: Unique name the resolver chooses from, for example `get weather`.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time the daemon last stored the intent, in ISO 8601.
+    IntentEntityDto:
+      type: object
+      description: One entity of an intent.
+      required:
+      - id
+      - name
+      - kind
+      - values
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable entity identifier.
+        kind:
+          $ref: '#/components/schemas/EntityKindDto'
+          description: Whether the entity is open or closed.
+        name:
+          type: string
+          description: Name of the entity, for example `city`.
+        required:
+          type: boolean
+          description: |-
+            Whether the intent needs a value for this entity.
+
+            A required entity the daemon cannot read makes the turn ask the
+            user for the value. An optional entity the daemon cannot read lets
+            the command run without it.
+        script:
+          type:
+          - string
+          - 'null'
+          description: Shell command that provides the values of a script entity, or none.
+        values:
+          type: array
+          items:
+            type: string
+          description: Values of a closed entity. An open entity has none.
+    IntentEntityWriteDto:
+      type: object
+      description: One entity of the body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.
+      required:
+      - name
+      - kind
+      properties:
+        kind:
+          $ref: '#/components/schemas/EntityKindDto'
+          description: Whether the entity is open or closed.
+        name:
+          type: string
+          description: Name of the entity.
+        required:
+          type: boolean
+          description: Whether the intent needs a value for this entity. It defaults to yes.
+        script:
+          type:
+          - string
+          - 'null'
+          description: Shell command that provides the values of a script entity.
+        values:
+          type: array
+          items:
+            type: string
+          description: Values of a closed entity. An open entity sends none.
+    IntentListDto:
+      type: object
+      description: Reply of `GET /api/v1/intents`.
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntentDto'
+          description: The intents, in name order.
+    IntentWriteDto:
+      type: object
+      description: |-
+        Body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.
+        The daemon replaces the entity set of the intent with the sent one.
+      required:
+      - name
+      - description
+      - command
+      properties:
+        command:
+          type: string
+          description: Shell command the daemon runs for this intent.
+        description:
+          type: string
+          description: What the intent does, in one sentence.
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntentEntityWriteDto'
+          description: The entities the intent reads from the message.
+        examples:
+          type: array
+          items:
+            type: string
+          description: Phrases a user may say for this intent, one per entry.
+        name:
+          type: string
+          description: Unique name of the intent.
     LabelBudgetDto:
       type: object
-      required: [labels, softLimit, hardLimit, intents, intentLimit, overSoft, overHard]
+      description: How many labels the intent configuration adds up to.
+      required:
+      - labels
+      - softLimit
+      - hardLimit
+      - intents
+      - overSoft
+      - overHard
       properties:
-        labels: { type: integer, description: One label per intent, per entity, and per value of a closed entity }
-        softLimit: { type: integer, example: 20 }
-        hardLimit: { type: integer, example: 30 }
-        intents: { type: integer }
+        hardLimit:
+          type: integer
+          description: Number of labels a GLiNER model reads before it degrades.
+          minimum: 0
+        intentLimit:
+          type:
+          - integer
+          - 'null'
+          description: |-
+            Number of intents the resolver can offer, or null when it has no
+            limit. The layered router reads a catalog of any size, because
+            only the short list of one turn reaches a model.
+          minimum: 0
+        intents:
+          type: integer
+          description: Number of configured intents.
+          minimum: 0
+        labels:
+          type: integer
+          description: |-
+            Number of labels a GLiNER model reads for this configuration.
+            One label per intent, plus one per entity, plus one per value of
+            a closed entity.
+          minimum: 0
+        overHard:
+          type: integer
+          description: Number of labels that are past the hard limit, or zero.
+          minimum: 0
+        overSoft:
+          type: integer
+          description: Number of labels that are past the soft limit, or zero.
+          minimum: 0
+        softLimit:
+          type: integer
+          description: Number of labels a GLiNER model reads comfortably.
+          minimum: 0
+        warning:
+          type:
+          - string
+          - 'null'
+          description: The warning the settings page shows, or null.
+    LlamaDependencyDto:
+      type: object
+      description: The llama.cpp server as the settings page sees it.
+      required:
+      - reachable
+      - baseUrl
+      - model
+      - models
+      properties:
+        baseUrl:
+          type: string
+          description: The address the daemon asked.
+        detail:
+          type:
+          - string
+          - 'null'
+          description: Why it does not answer, or null.
+        model:
+          type: string
+          description: The model the daemon stored.
+        models:
+          type: array
+          items:
+            type: string
+          description: The models the server offers. Empty when the server is down.
+        reachable:
+          type: boolean
+          description: Whether the server answers.
+    LlamaStatusDto:
+      type: object
+      description: Configuration of the llama.cpp resolver.
+      required:
+      - baseUrl
+      - model
+      - intentLimit
+      properties:
+        baseUrl:
+          type: string
+          description: Base URL of the llama.cpp server.
         intentLimit:
           type: integer
-          nullable: true
-          example: 26
-          description: >-
-            The number of intents the resolver can offer, null when it has no
-            limit. The layered router reads a catalog of any size, because only
-            the short list of one turn reaches a model.
-        overSoft: { type: integer }
-        overHard: { type: integer }
-        warning: { type: string, nullable: true }
-    RouterStatusDto:
+          description: Number of intents the resolver can offer.
+          minimum: 0
+        model:
+          type: string
+          description: Model name the server answers to.
+    LocalDownloadDto:
       type: object
-      description: >-
-        The state of the layered router. Each stage names the reader it would
-        use right now, so a stage that cannot run its reader says so before a
-        turn depends on it.
-      required: [fastPath, retrieve, decide, extract, topK, floor, margin, lexicalWeight, denseWeight, embedModel, embedSource, embedLocalModel, rerankModel, localDevice, activeLocalDevice, local, phraseGate, listMatch, listFloor, embeddingsReachable]
+      description: The download of one built in model of the router that runs right now.
+      required:
+      - model
+      - receivedBytes
+      - done
       properties:
-        fastPath: { type: boolean, description: Whether the deterministic pass reads the message first }
-        retrieve: { $ref: '#/components/schemas/RetrieveEngineDto' }
-        decide: { $ref: '#/components/schemas/DecideEngineDto' }
-        extract: { $ref: '#/components/schemas/ExtractEngineDto' }
-        topK: { type: integer, minimum: 1, maximum: 64, example: 8 }
-        floor: { type: number, minimum: 0, maximum: 1, example: 0.45 }
-        margin: { type: number, minimum: 0, maximum: 1, example: 0.1 }
-        lexicalWeight: { type: number, minimum: 0, example: 1 }
-        denseWeight: { type: number, minimum: 0, example: 1 }
-        embedModel: { type: string, example: bge-small-en-v1.5 }
-        embedSource: { $ref: '#/components/schemas/EmbedSourceDto' }
-        embedLocalModel: { type: string, example: bge-small-en-v1.5 }
-        rerankModel: { type: string, example: ms-marco-MiniLM-L-6-v2 }
-        localDevice: { $ref: '#/components/schemas/GlinerDeviceDto' }
-        activeLocalDevice: { type: string, description: The device a built in model of the router would run on now }
-        local: { $ref: '#/components/schemas/LocalStoreDto' }
-        phraseGate: { type: boolean }
-        listMatch: { $ref: '#/components/schemas/ListMatchDto' }
-        listFloor: { type: number, minimum: 0, maximum: 1, example: 0.8 }
-        embeddingsReachable: { type: boolean, description: Whether the place the vectors come from answers right now }
-        embeddingsDetail: { type: string, nullable: true }
+        done:
+          type: boolean
+          description: Whether the download finished.
+        error:
+          type:
+          - string
+          - 'null'
+          description: The error that stopped the download, or null.
+        model:
+          type: string
+          description: Identifier of the model.
+        receivedBytes:
+          type: integer
+          format: int64
+          description: Bytes written so far.
+          minimum: 0
+        totalBytes:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Size the server announced, or null when it announced none.
+          minimum: 0
+    LocalModelDto:
+      type: object
+      description: One built in model of the router the daemon can download.
+      required:
+      - id
+      - name
+      - note
+      - role
+      - sizeBytes
+      - installed
+      properties:
+        id:
+          type: string
+          description: Identifier of the model, for example `bge-small-en-v1.5`.
+        installed:
+          type: boolean
+          description: Whether the model is on disk.
+        name:
+          type: string
+          description: Name the settings page shows.
+        note:
+          type: string
+          description: One sentence about the model.
+        role:
+          type: string
+          description: 'What the model reads: `embeddings` or `reranker`.'
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Size of the download in bytes.
+          minimum: 0
+    LocalStoreDto:
+      type: object
+      description: State of the built in models of the router.
+      required:
+      - modelsDir
+      - models
+      properties:
+        download:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/LocalDownloadDto'
+            description: The download that runs right now, or null.
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocalModelDto'
+          description: Every model the daemon can download.
+        modelsDir:
+          type: string
+          description: Directory that holds the downloaded models.
+    MessageCandidateDto:
+      type: object
+      description: One intent the retrieval pass offered for a turn.
+      required:
+      - name
+      - score
+      - evidence
+      properties:
+        evidence:
+          type: string
+          description: Which evidence read the score, for example `words` or `embedding`.
+        name:
+          type: string
+          description: Name of the intent.
+        score:
+          type: number
+          format: float
+          description: The score of the intent for this turn, between 0 and 1.
+    MessageEntityDto:
+      type: object
+      description: |-
+        One entity of an intent with the value the resolver read for it.
+
+        A value is read by one reader of the pipeline, and which one read it is
+        what tells a value the daemon proved from a value a model guessed, so
+        the read is reported next to the value it produced.
+      required:
+      - name
+      - value
+      properties:
+        engine:
+          type:
+          - string
+          - 'null'
+          description: |-
+            The engine that ran the reader, or null when the daemon read the
+            value itself.
+        model:
+          type:
+          - string
+          - 'null'
+          description: The model the reader ran, or null when it ran none.
+        name:
+          type: string
+          description: Name of the entity, for example `city`.
+        read:
+          type:
+          - string
+          - 'null'
+          description: |-
+            What the reader read before the value was matched to an entry of a
+            list, or null when the value is the entry itself.
+        score:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: |-
+            The similarity the match read, between 0 and 1, or null when the
+            reader reported no score.
+        source:
+          type:
+          - string
+          - 'null'
+          description: |-
+            How the daemon read the value, or null when it read none:
+            `fast_path`, `list`, `embedding`, `spans`, or `model`.
+        value:
+          type: string
+          description: The value the resolver read, empty when it read none.
+    MessageMetaDto:
+      type: object
+      description: |-
+        How the daemon read one handled turn.
+
+        The resolver owns two steps: it chooses the intent, and it reads the
+        values of the entities of that intent. Either step may run on the
+        llama.cpp server or on the built in GLiNER model, so a turn reports
+        the engine of each step. The rest of the metadata is what the daemon
+        then ran, so the transcript can explain a stored turn.
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageCandidateDto'
+          description: |-
+            The intents the retrieval pass kept for this turn, best first.
+
+            The short list is the evidence of the decision, so a user who
+            reads `no intent matched` still reads what the catalog offered.
+        command:
+          type:
+          - string
+          - 'null'
+          description: The command after the daemon put the values in, or null.
+        durationMs:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: How long the command ran, in milliseconds, or null when none ran.
+          minimum: 0
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageEntityDto'
+          description: The entities of the intent with the values the daemon read.
+        exitCode:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: The exit code of the command, or null when none ran.
+        intentEngine:
+          type:
+          - string
+          - 'null'
+          description: The engine that chose the intent, or null when none chose one.
+        intentModel:
+          type:
+          - string
+          - 'null'
+          description: The model that engine ran, or null when the daemon cannot name it.
+        route:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/MessageRouteDto'
+            description: |-
+              How the layered router read the turn, stage by stage, or null when
+              the backend of the turn is not the router.
+
+              The stage above names the stage that decided, and this names every
+              stage the turn passed with the reader it ran and the short list it
+              read, so a stored turn can be read back the way the daemon read it.
+        stage:
+          type:
+          - string
+          - 'null'
+          description: |-
+            The stage of the layered router that decided the turn, or null
+            when the backend of the turn is not the router.
+
+            A turn the deterministic pass proved reads `fast_path`, a turn the
+            retrieval scores decided reads `retrieve`, and a turn a model
+            chose from the short list reads `rerank`.
+        valueEngine:
+          type:
+          - string
+          - 'null'
+          description: The engine that read the entity values, or null when none did.
+        valueModel:
+          type:
+          - string
+          - 'null'
+          description: The model that engine ran, or null when the daemon cannot name it.
+    MessageRouteDto:
+      type: object
+      description: |-
+        How the layered router read one turn, stage by stage.
+
+        The stages of the router run in order and the first one that can answer
+        ends the turn, so the stages a turn passed are its route. The route
+        carries the reader every stage ran and the short list it read, which is
+        what a reader of the transcript needs to see why a message met an
+        intent, met none, or was answered by a stage it did not expect.
+      required:
+      - matched
+      properties:
+        matched:
+          type: boolean
+          description: True when the turn met an intent.
+        reason:
+          type:
+          - string
+          - 'null'
+          description: Why the router refused, or null when it chose.
+        stage:
+          type:
+          - string
+          - 'null'
+          description: The stage that decided the turn, or null when the router refused.
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageRouteStepDto'
+          description: The stages the turn passed, in the order they ran.
+    MessageRouteStepDto:
+      type: object
+      description: |-
+        One stage of the layered router in one turn.
+
+        Every stage reports what it read and how it ended, so a turn that a
+        model answered and a turn the words answered are told apart, and a
+        stage that fell back to its cheaper reader says so.
+      required:
+      - stage
+      - outcome
+      - reader
+      - durationMs
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageCandidateDto'
+          description: The candidates the stage read, best first.
+        detail:
+          type:
+          - string
+          - 'null'
+          description: One sentence about what the stage read, or null.
+        durationMs:
+          type: integer
+          format: int64
+          description: How long the stage took, in milliseconds.
+          minimum: 0
+        model:
+          type:
+          - string
+          - 'null'
+          description: The model the reader ran, or null when it ran none.
+        outcome:
+          type: string
+          description: |-
+            How the stage ended: `matched`, `refused`, `passed`, `fell_back`,
+            or `skipped`.
+        reader:
+          type: string
+          description: |-
+            The reader the stage ran, for example `rules`, `words`, `reranker`,
+            or `model`.
+        stage:
+          type: string
+          description: 'The stage: `fast_path`, `retrieve`, `decide`, or `extract`.'
+    OutputStreamDto:
+      type: string
+      description: The stream a command wrote one line to.
+      enum:
+      - stdout
+      - stderr
+    ResolverPreviewDto:
+      type: object
+      description: |-
+        Reply of `POST /api/v1/resolver/preview`.
+
+        The preview carries the same metadata a stored turn carries, so a
+        sentence the user tries is read with the same report as a message the
+        daemon really handled, minus the run. The intent it met, the reader
+        that read every value, and the route the message took are the report a
+        user tunes the pipeline by.
+      required:
+      - text
+      - matched
+      - reply
+      properties:
+        confidence:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: The probability of the choice, or null when the resolver sent none.
+        intent:
+          type:
+          - string
+          - 'null'
+          description: The name of the intent the resolver met, or null when it met none.
+        matched:
+          type: boolean
+          description: True when the resolver met an intent.
+        meta:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/MessageMetaDto'
+            description: How the daemon read the turn, or null when it read nothing at all.
+        reply:
+          type: string
+          description: |-
+            The reply the daemon would store, or empty when the turn would run
+            the command of its intent.
+        text:
+          type: string
+          description: The message the daemon read.
+    ResolverPreviewRequestDto:
+      type: object
+      description: |-
+        Body of `POST /api/v1/resolver/preview`.
+
+        A preview reads one message the way a turn would and runs nothing, so
+        the settings page can show the route of a sentence before the user
+        sends it.
+      required:
+      - text
+      properties:
+        text:
+          type: string
+          description: The message to read.
     ResolverStatusDto:
       type: object
-      required: [backend, llama, gliner, budget, router]
+      description: |-
+        Reply of `GET /api/v1/resolver`.
+        This tells the settings page which engines are ready to work.
+      required:
+      - backend
+      - llama
+      - gliner
+      - budget
+      - router
       properties:
-        backend: { $ref: '#/components/schemas/ResolverBackendDto' }
-        llama: { $ref: '#/components/schemas/LlamaStatusDto' }
-        gliner: { $ref: '#/components/schemas/GlinerStoreDto' }
-        budget: { $ref: '#/components/schemas/LabelBudgetDto' }
-        router: { $ref: '#/components/schemas/RouterStatusDto' }
+        backend:
+          type: string
+          description: The engine that reads the intent of a message.
+        budget:
+          $ref: '#/components/schemas/LabelBudgetDto'
+          description: How many labels the intent configuration adds up to.
+        gliner:
+          $ref: '#/components/schemas/GlinerStoreDto'
+          description: State of the built in GLiNER models.
+        llama:
+          $ref: '#/components/schemas/LlamaStatusDto'
+          description: Configuration of the llama.cpp resolver.
+        router:
+          $ref: '#/components/schemas/RouterStatusDto'
+          description: The state of the layered router.
+    RouterStatusDto:
+      type: object
+      description: |-
+        The state of the layered router.
+
+        The router has a stage per setting, and each stage names the reader it
+        would use right now. The settings page shows that state, so a stage
+        that cannot run its reader says so before a turn depends on it.
+      required:
+      - fastPath
+      - retrieve
+      - decide
+      - extract
+      - topK
+      - floor
+      - margin
+      - lexicalWeight
+      - denseWeight
+      - embedModel
+      - embedSource
+      - embedLocalModel
+      - rerankModel
+      - localDevice
+      - activeLocalDevice
+      - local
+      - phraseGate
+      - listMatch
+      - listFloor
+      - embeddingsReachable
+      properties:
+        activeLocalDevice:
+          type: string
+          description: The device a built in model of the router would run on now.
+        decide:
+          type: string
+          description: How the decision pass chooses one of the short list.
+        denseWeight:
+          type: number
+          format: float
+          description: Weight of the embeddings of the catalog.
+        embedLocalModel:
+          type: string
+          description: Identifier of the built in embedding model.
+        embedModel:
+          type: string
+          description: Model name the embedding server answers to.
+        embedSource:
+          type: string
+          description: Where the retrieval stage and the list matcher read the vectors.
+        embeddingsDetail:
+          type:
+          - string
+          - 'null'
+          description: Why the model server answers with no embeddings, or null.
+        embeddingsReachable:
+          type: boolean
+          description: Whether the model server answers the router with embeddings.
+        extract:
+          type: string
+          description: How the values of the entities of the chosen intent are read.
+        fastPath:
+          type: boolean
+          description: Whether the deterministic pass reads the message first.
+        floor:
+          type: number
+          format: float
+          description: Smallest score the decision pass accepts.
+        lexicalWeight:
+          type: number
+          format: float
+          description: Weight of the words of the catalog.
+        listFloor:
+          type: number
+          format: float
+          description: Smallest cosine similarity an embedding match of a value needs.
+        listMatch:
+          type: string
+          description: How a mention is read against the values of an entity.
+        local:
+          $ref: '#/components/schemas/LocalStoreDto'
+          description: State of the built in models of the router.
+        localDevice:
+          type: string
+          description: The device a built in model of the router runs on.
+        margin:
+          type: number
+          format: float
+          description: Smallest distance between the best and the second best.
+        phraseGate:
+          type: boolean
+          description: Whether a phrase counts only when the message shares its action.
+        rerankModel:
+          type: string
+          description: Identifier of the built in reranker.
+        retrieve:
+          type: string
+          description: The evidence the retrieval pass ranks the catalog with.
+        topK:
+          type: integer
+          description: Size of the short list the retrieval pass keeps.
+          minimum: 0
+    ScriptPreviewDto:
+      type: object
+      description: |-
+        Reply of `POST /api/v1/intents/script/preview`.
+
+        The settings page shows the values a script answers with, so a user
+        who writes one reads the list before it reaches a turn.
+      required:
+      - values
+      - durationMs
+      properties:
+        durationMs:
+          type: integer
+          format: int64
+          description: How long the script ran, in milliseconds.
+          minimum: 0
+        error:
+          type:
+          - string
+          - 'null'
+          description: Why the script did not answer, or none when it did.
+        exitCode:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: The exit code of the script, or none when it did not start.
+        values:
+          type: array
+          items:
+            type: string
+          description: The values the script wrote, in the order it wrote them.
+    ScriptPreviewWriteDto:
+      type: object
+      description: Body of `POST /api/v1/intents/script/preview`.
+      required:
+      - script
+      properties:
+        script:
+          type: string
+          description: The shell command the daemon runs for the preview.
     SettingsDto:
       type: object
-      required: [queueEnabled, resolverBackend, resolverBaseUrl, resolverModel, glinerModel, glinerDevice, glinerThreshold, routerFastPath, routerRetrieve, routerDecide, routerExtract, routerTopK, routerFloor, routerMargin, routerLexicalWeight, routerDenseWeight, routerEmbedModel, routerModelsDir, routerEmbedSource, routerEmbedLocalModel, routerRerankModel, routerLocalDevice, routerPhraseGate, routerListMatch, routerListFloor]
+      description: Reply of `GET /api/v1/settings` and `PUT /api/v1/settings`.
+      required:
+      - queueEnabled
+      - resolverBackend
+      - resolverBaseUrl
+      - resolverModel
+      - glinerModel
+      - glinerDevice
+      - glinerThreshold
+      - routerFastPath
+      - routerRetrieve
+      - routerDecide
+      - routerExtract
+      - routerTopK
+      - routerFloor
+      - routerMargin
+      - routerLexicalWeight
+      - routerDenseWeight
+      - routerEmbedModel
+      - routerModelsDir
+      - routerEmbedSource
+      - routerEmbedLocalModel
+      - routerRerankModel
+      - routerLocalDevice
+      - routerPhraseGate
+      - routerListMatch
+      - routerListFloor
+      - previewSentences
       properties:
-        queueEnabled: { type: boolean }
-        resolverBackend: { $ref: '#/components/schemas/ResolverBackendDto' }
-        resolverBaseUrl: { type: string, example: http://127.0.0.1:8012/v1 }
-        resolverModel: { type: string, example: qwen3.5-4b }
-        glinerModel: { type: string, example: gliner_small-v2.1 }
-        glinerDevice: { $ref: '#/components/schemas/GlinerDeviceDto' }
-        glinerThreshold: { type: number, minimum: 0, maximum: 1, example: 0.3 }
-        routerFastPath: { type: boolean, description: Whether the deterministic pass of the router reads the message first }
-        routerRetrieve: { $ref: '#/components/schemas/RetrieveEngineDto' }
-        routerDecide: { $ref: '#/components/schemas/DecideEngineDto' }
-        routerExtract: { $ref: '#/components/schemas/ExtractEngineDto' }
-        routerTopK: { type: integer, minimum: 1, maximum: 64, example: 8 }
-        routerFloor: { type: number, minimum: 0, maximum: 1, example: 0.45 }
-        routerMargin: { type: number, minimum: 0, maximum: 1, example: 0.1 }
-        routerLexicalWeight: { type: number, minimum: 0, example: 1 }
-        routerDenseWeight: { type: number, minimum: 0, example: 1 }
-        routerEmbedModel: { type: string, example: bge-small-en-v1.5 }
-        routerModelsDir: { type: string, example: models/router }
-        routerEmbedSource: { $ref: '#/components/schemas/EmbedSourceDto' }
-        routerEmbedLocalModel: { type: string, example: bge-small-en-v1.5 }
-        routerRerankModel: { type: string, example: ms-marco-MiniLM-L-6-v2 }
-        routerLocalDevice: { $ref: '#/components/schemas/GlinerDeviceDto' }
-        routerPhraseGate: { type: boolean, description: Whether a phrase of an intent counts only when the message shares its action }
-        routerListMatch: { $ref: '#/components/schemas/ListMatchDto' }
-        routerListFloor: { type: number, minimum: 0, maximum: 1, example: 0.8 }
+        glinerDevice:
+          type: string
+          description: The device a GLiNER model runs on.
+        glinerModel:
+          type: string
+          description: Identifier of the built in GLiNER model.
+        glinerThreshold:
+          type: number
+          format: float
+          description: Smallest probability a GLiNER label needs to count.
+        previewSentences:
+          type: array
+          items:
+            type: string
+          description: |-
+            The sentences the settings page tries against the resolver.
+
+            The sentences are the tests of a user and not a setting of the
+            pipeline, so they are stored with the settings the page shows and
+            never reach a turn.
+        queueEnabled:
+          type: boolean
+          description: Whether the queue stores messages.
+        resolverBackend:
+          type: string
+          description: The engine that reads the intent of a message.
+        resolverBaseUrl:
+          type: string
+          description: Base URL of the intent resolver.
+        resolverModel:
+          type: string
+          description: Model name the intent resolver asks the server for.
+        routerDecide:
+          type: string
+          description: How the decision pass chooses one of the short list.
+        routerDenseWeight:
+          type: number
+          format: float
+          description: Weight of the embeddings of the catalog.
+        routerEmbedLocalModel:
+          type: string
+          description: Identifier of the built in embedding model.
+        routerEmbedModel:
+          type: string
+          description: Model name the embedding server answers to.
+        routerEmbedSource:
+          type: string
+          description: Where the retrieval stage and the list matcher read the vectors.
+        routerExtract:
+          type: string
+          description: How the values of the entities of the chosen intent are read.
+        routerFastPath:
+          type: boolean
+          description: Whether the deterministic pass of the router reads the message first.
+        routerFloor:
+          type: number
+          format: float
+          description: Smallest score the decision pass accepts.
+        routerLexicalWeight:
+          type: number
+          format: float
+          description: Weight of the words of the catalog.
+        routerListFloor:
+          type: number
+          format: float
+          description: Smallest cosine similarity an embedding match of a value needs.
+        routerListMatch:
+          type: string
+          description: How a mention is read against the values of an entity.
+        routerLocalDevice:
+          type: string
+          description: The device a built in model of the router runs on.
+        routerMargin:
+          type: number
+          format: float
+          description: Smallest distance between the best and the second best.
+        routerModelsDir:
+          type: string
+          description: Directory that holds the downloaded models of the router.
+        routerPhraseGate:
+          type: boolean
+          description: Whether a phrase counts only when the message shares its action.
+        routerRerankModel:
+          type: string
+          description: Identifier of the built in reranker.
+        routerRetrieve:
+          type: string
+          description: The evidence the retrieval pass ranks the catalog with.
+        routerTopK:
+          type: integer
+          description: Size of the short list the retrieval pass keeps.
+          minimum: 0
     SettingsUpdateDto:
       type: object
-      description: A null field keeps the stored value.
+      description: |-
+        Body of `PUT /api/v1/settings`.
+        A null field keeps the stored value.
       properties:
-        queueEnabled: { type: boolean, nullable: true }
-        resolverBackend: { allOf: [ { $ref: '#/components/schemas/ResolverBackendDto' } ], nullable: true }
-        resolverBaseUrl: { type: string, nullable: true }
-        resolverModel: { type: string, nullable: true }
-        glinerModel: { type: string, nullable: true }
-        glinerDevice: { allOf: [ { $ref: '#/components/schemas/GlinerDeviceDto' } ], nullable: true }
-        glinerThreshold: { type: number, nullable: true, minimum: 0, maximum: 1 }
-        routerFastPath: { type: boolean, nullable: true }
-        routerRetrieve: { allOf: [ { $ref: '#/components/schemas/RetrieveEngineDto' } ], nullable: true }
-        routerDecide: { allOf: [ { $ref: '#/components/schemas/DecideEngineDto' } ], nullable: true }
-        routerExtract: { allOf: [ { $ref: '#/components/schemas/ExtractEngineDto' } ], nullable: true }
-        routerTopK: { type: integer, nullable: true, minimum: 1, maximum: 64 }
-        routerFloor: { type: number, nullable: true, minimum: 0, maximum: 1 }
-        routerMargin: { type: number, nullable: true, minimum: 0, maximum: 1 }
-        routerLexicalWeight: { type: number, nullable: true, minimum: 0 }
-        routerDenseWeight: { type: number, nullable: true, minimum: 0 }
-        routerEmbedModel: { type: string, nullable: true }
-        routerModelsDir: { type: string, nullable: true }
-        routerEmbedSource: { allOf: [ { $ref: '#/components/schemas/EmbedSourceDto' } ], nullable: true }
-        routerEmbedLocalModel: { type: string, nullable: true }
-        routerRerankModel: { type: string, nullable: true }
-        routerLocalDevice: { allOf: [ { $ref: '#/components/schemas/GlinerDeviceDto' } ], nullable: true }
-        routerPhraseGate: { type: boolean, nullable: true }
-        routerListMatch: { allOf: [ { $ref: '#/components/schemas/ListMatchDto' } ], nullable: true }
-        routerListFloor: { type: number, nullable: true, minimum: 0, maximum: 1 }
-    SystemEventPayloadDto:
-      oneOf:
-        - type: object
-          required: [type]
-          properties:
-            type: { type: string, enum: [WakeDetected] }
-            timestamp: { type: string, format: date-time }
-        - type: object
-          required: [type]
-          properties:
-            type: { type: string, enum: [ListeningStarted] }
-        - type: object
-          required: [type, reason]
-          properties:
-            type: { type: string, enum: [ListeningStopped] }
-            reason: { $ref: '#/components/schemas/StopReasonDto' }
-        - type: object
-          required: [type, text]
-          properties:
-            type: { type: string, enum: [TranscriptInterim, TranscriptFinal, IntentNotFound] }
-            text: { type: string }
-        - type: object
-          required: [type, original, corrected]
-          properties:
-            type: { type: string, enum: [TranscriptCorrected] }
-            original: { type: string }
-            corrected: { type: string }
-        - type: object
-          required: [type, delta]
-          properties:
-            type: { type: string, enum: [IntentThinking] }
-            delta: { type: string, description: Token the resolver read from the model }
-        - type: object
-          required: [type, intent, confidence, engine, model]
-          properties:
-            type: { type: string, enum: [IntentResolved] }
-            intent: { type: string, description: Name of the chosen intent }
-            confidence: { type: number, nullable: true, minimum: 0, maximum: 1 }
-            engine: { $ref: '#/components/schemas/ResolverEngineDto' }
-            model: { type: string, nullable: true, description: The model the engine ran }
-        - type: object
-          required: [type, engine, model, entities]
-          properties:
-            type: { type: string, enum: [IntentValuesRead] }
-            engine: { $ref: '#/components/schemas/ResolverEngineDto' }
-            model: { type: string, nullable: true, description: The model the engine ran }
-            entities:
-              type: array
-              description: The entities of the chosen intent with the values the engine read
-              items:
-                type: object
-                required: [name, value]
-                properties:
-                  name: { type: string }
-                  value: { type: string }
-        - type: object
-          required: [type, intent, command]
-          properties:
-            type: { type: string, enum: [ExecutionStarted] }
-            intent: { type: string }
-            command: { type: string }
-        - type: object
-          required: [type, stream, line]
-          properties:
-            type: { type: string, enum: [ExecutionOutput] }
-            stream: { $ref: '#/components/schemas/OutputStreamDto' }
-            line: { type: string }
-        - type: object
-          required: [type, intent, exitCode, durationMs, output]
-          properties:
-            type: { type: string, enum: [ExecutionCompleted] }
-            intent: { type: string }
-            exitCode: { type: integer }
-            durationMs: { type: integer, minimum: 0 }
-            output: { type: string }
-        - type: object
-          required: [type, intent, error]
-          properties:
-            type: { type: string, enum: [ExecutionFailed] }
-            intent: { type: string }
-            error: { type: string }
-        - type: object
-          required: [type, id]
-          properties:
-            type: { type: string, enum: [MessageQueued, MessageReplied] }
-            id: { type: string, format: uuid }
+        glinerDevice:
+          type:
+          - string
+          - 'null'
+          description: The device a GLiNER model runs on.
+        glinerModel:
+          type:
+          - string
+          - 'null'
+          description: Identifier of the built in GLiNER model.
+        glinerThreshold:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Smallest probability a GLiNER label needs to count.
+        previewSentences:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+          description: |-
+            The sentences the settings page tries against the resolver.
+
+            The list is written whole, because the page adds and removes one
+            sentence at a time and always knows the list it wants to keep.
+        queueEnabled:
+          type:
+          - boolean
+          - 'null'
+          description: Whether the queue stores messages.
+        resolverBackend:
+          type:
+          - string
+          - 'null'
+          description: The engine that reads the intent of a message.
+        resolverBaseUrl:
+          type:
+          - string
+          - 'null'
+          description: Base URL of the intent resolver.
+        resolverModel:
+          type:
+          - string
+          - 'null'
+          description: Model name the intent resolver asks the server for.
+        routerDecide:
+          type:
+          - string
+          - 'null'
+          description: How the decision pass chooses one of the short list.
+        routerDenseWeight:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Weight of the embeddings of the catalog.
+        routerEmbedLocalModel:
+          type:
+          - string
+          - 'null'
+          description: Identifier of the built in embedding model.
+        routerEmbedModel:
+          type:
+          - string
+          - 'null'
+          description: Model name the embedding server answers to.
+        routerEmbedSource:
+          type:
+          - string
+          - 'null'
+          description: Where the retrieval stage and the list matcher read the vectors.
+        routerExtract:
+          type:
+          - string
+          - 'null'
+          description: How the values of the entities of the chosen intent are read.
+        routerFastPath:
+          type:
+          - boolean
+          - 'null'
+          description: Whether the deterministic pass of the router reads the message first.
+        routerFloor:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Smallest score the decision pass accepts.
+        routerLexicalWeight:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Weight of the words of the catalog.
+        routerListFloor:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Smallest cosine similarity an embedding match of a value needs.
+        routerListMatch:
+          type:
+          - string
+          - 'null'
+          description: How a mention is read against the values of an entity.
+        routerLocalDevice:
+          type:
+          - string
+          - 'null'
+          description: The device a built in model of the router runs on.
+        routerMargin:
+          type:
+          - number
+          - 'null'
+          format: float
+          description: Smallest distance between the best and the second best.
+        routerModelsDir:
+          type:
+          - string
+          - 'null'
+          description: Directory that holds the downloaded models of the router.
+        routerPhraseGate:
+          type:
+          - boolean
+          - 'null'
+          description: Whether a phrase counts only when the message shares its action.
+        routerRerankModel:
+          type:
+          - string
+          - 'null'
+          description: Identifier of the built in reranker.
+        routerRetrieve:
+          type:
+          - string
+          - 'null'
+          description: The evidence the retrieval pass ranks the catalog with.
+        routerTopK:
+          type:
+          - integer
+          - 'null'
+          description: Size of the short list the retrieval pass keeps.
+          minimum: 0
+    StatusDto:
+      type: object
+      description: Reply of `GET /api/v1/status`.
+      required:
+      - state
+      - since
+      - version
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: Time the daemon entered the state, in ISO 8601.
+        state:
+          $ref: '#/components/schemas/DaemonStateDto'
+          description: Current daemon state.
+        version:
+          type: string
+          description: Daemon version.
+    StopReasonDto:
+      type: string
+      description: Reason why the daemon left the Listening state.
+      enum:
+      - SilenceTimeout
+      - UserStopped
+      - WakeDetected
+      - Error
     SystemEventDto:
       type: object
-      required: [at, payload]
+      description: One event of the socket stream.
+      required:
+      - at
+      - payload
       properties:
-        at: { type: string, format: date-time }
-        payload: { $ref: '#/components/schemas/SystemEventPayloadDto' }
+        at:
+          type: string
+          format: date-time
+          description: Time the daemon emitted the event, in ISO 8601.
+        payload:
+          $ref: '#/components/schemas/SystemEventPayloadDto'
+          description: Payload of the event, tagged by the backend variant name.
+    SystemEventPayloadDto:
+      oneOf:
+      - type: object
+        required:
+        - timestamp
+        - type
+        properties:
+          timestamp:
+            type: string
+            format: date-time
+          type:
+            type: string
+            enum:
+            - WakeDetected
+      - type: object
+        required:
+        - type
+        properties:
+          type:
+            type: string
+            enum:
+            - ListeningStarted
+      - type: object
+        required:
+        - reason
+        - type
+        properties:
+          reason:
+            $ref: '#/components/schemas/StopReasonDto'
+          type:
+            type: string
+            enum:
+            - ListeningStopped
+      - type: object
+        required:
+        - text
+        - type
+        properties:
+          text:
+            type: string
+          type:
+            type: string
+            enum:
+            - TranscriptInterim
+      - type: object
+        required:
+        - text
+        - type
+        properties:
+          text:
+            type: string
+          type:
+            type: string
+            enum:
+            - TranscriptFinal
+      - type: object
+        required:
+        - original
+        - corrected
+        - type
+        properties:
+          corrected:
+            type: string
+          original:
+            type: string
+          type:
+            type: string
+            enum:
+            - TranscriptCorrected
+      - type: object
+        description: Token the resolver read from the model while it decides.
+        required:
+        - delta
+        - type
+        properties:
+          delta:
+            type: string
+          type:
+            type: string
+            enum:
+            - IntentThinking
+      - type: object
+        required:
+        - intent
+        - engine
+        - type
+        properties:
+          confidence:
+            type:
+            - number
+            - 'null'
+            format: float
+          engine:
+            type: string
+            description: The engine that chose the intent.
+          intent:
+            type: string
+          model:
+            type:
+            - string
+            - 'null'
+            description: The model that engine ran, or null when the daemon cannot name it.
+          type:
+            type: string
+            enum:
+            - IntentResolved
+      - type: object
+        description: One value the resolver read for an entity of the chosen intent.
+        required:
+        - engine
+        - entities
+        - type
+        properties:
+          engine:
+            type: string
+            description: The engine that read the values.
+          entities:
+            type: array
+            items:
+              $ref: '#/components/schemas/MessageEntityDto'
+            description: The entities with the values the engine read.
+          model:
+            type:
+            - string
+            - 'null'
+            description: The model that engine ran, or null when the daemon cannot name it.
+          type:
+            type: string
+            enum:
+            - IntentValuesRead
+      - type: object
+        required:
+        - text
+        - type
+        properties:
+          text:
+            type: string
+          type:
+            type: string
+            enum:
+            - IntentNotFound
+      - type: object
+        required:
+        - intent
+        - command
+        - type
+        properties:
+          command:
+            type: string
+          intent:
+            type: string
+          type:
+            type: string
+            enum:
+            - ExecutionStarted
+      - type: object
+        description: One line the command of an intent wrote to its output.
+        required:
+        - stream
+        - line
+        - type
+        properties:
+          line:
+            type: string
+          stream:
+            $ref: '#/components/schemas/OutputStreamDto'
+          type:
+            type: string
+            enum:
+            - ExecutionOutput
+      - type: object
+        required:
+        - intent
+        - exit_code
+        - duration_ms
+        - output
+        - type
+        properties:
+          duration_ms:
+            type: integer
+            format: int64
+            minimum: 0
+          exit_code:
+            type: integer
+            format: int32
+          intent:
+            type: string
+          output:
+            type: string
+          type:
+            type: string
+            enum:
+            - ExecutionCompleted
+      - type: object
+        required:
+        - intent
+        - error
+        - type
+        properties:
+          error:
+            type: string
+          intent:
+            type: string
+          type:
+            type: string
+            enum:
+            - ExecutionFailed
+      - type: object
+        description: Queue event emitted when a chat message is stored.
+        required:
+        - id
+        - type
+        properties:
+          id:
+            type: string
+            format: uuid
+          type:
+            type: string
+            enum:
+            - MessageQueued
+      - type: object
+        description: Queue event emitted when the daemon replies.
+        required:
+        - id
+        - type
+        properties:
+          id:
+            type: string
+            format: uuid
+          type:
+            type: string
+            enum:
+            - MessageReplied
+      description: Payload of a `SystemEventDto`.

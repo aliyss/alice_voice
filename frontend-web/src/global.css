@@ -33,6 +33,7 @@
   --color-ds-line: var(--ds-color-line);
   --color-ds-line-strong: var(--ds-color-line-strong);
   --color-ds-line-faint: var(--ds-color-line-faint);
+  --color-ds-line-ultra: var(--ds-color-line-ultra);
 
   /* ---------------------------------------------------------------------
    * Text

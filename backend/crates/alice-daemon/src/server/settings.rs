@@ -23,6 +23,7 @@ use crate::settings::SettingsValues;
 const URL_SCHEMES: [&str; 2] = ["http://", "https://"];
 
 /// Reply of `GET /api/v1/settings`.
+#[utoipa::path(get, path = "/api/v1/settings", tag = "settings", responses((status = 200, description = "Stored settings", body = SettingsDto)))]
 #[instrument(skip(state))]
 pub async fn get_settings_handler(
     State(state): State<AppState>,
@@ -35,6 +36,16 @@ pub async fn get_settings_handler(
 ///
 /// A field the caller does not send keeps its stored value, so a caller
 /// may change one setting without sending the others.
+#[utoipa::path(
+    put,
+    path = "/api/v1/settings",
+    tag = "settings",
+    request_body = SettingsUpdateDto,
+    responses(
+        (status = 200, description = "Stored settings", body = SettingsDto),
+        (status = 400, description = "Invalid input")
+    )
+)]
 #[instrument(skip(state, body))]
 pub async fn put_settings_handler(
     State(state): State<AppState>,

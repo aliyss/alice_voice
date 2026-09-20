@@ -17,6 +17,12 @@ use crate::server::reply::{database_failed, not_found, RestError};
 use crate::server::state::AppState;
 
 /// Reply of `GET /api/v1/conversations`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/conversations", tag = "conversations",
+    params(ConversationQuery),
+    responses((status = 200, description = "Conversation list", body = ConversationListDto))
+)]
 #[instrument(skip(state))]
 pub async fn list_conversations_handler(
     State(state): State<AppState>,
@@ -43,6 +49,15 @@ pub async fn list_conversations_handler(
 }
 
 /// Reply of `GET /api/v1/conversations/{id}`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/conversations/{id}", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    responses(
+        (status = 200, description = "Conversation detail", body = ConversationDetailDto),
+        (status = 404, description = "Conversation not found")
+    )
+)]
 #[instrument(skip(state))]
 pub async fn get_conversation_handler(
     State(state): State<AppState>,

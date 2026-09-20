@@ -12,6 +12,7 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use tracing::instrument;
 
 /// Upgrade `GET /api/v1/events` to a WebSocket.
+#[utoipa::path(get, path = "/api/v1/events", tag = "events", responses((status = 101, description = "Switching Protocols")))]
 #[instrument(skip(state, upgrade))]
 pub async fn events_handler(
     State(state): State<crate::server::state::AppState>,

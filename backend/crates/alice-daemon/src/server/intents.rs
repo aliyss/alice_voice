@@ -22,6 +22,7 @@ use crate::server::reply::{database_failed, error_reply, not_found, RestError};
 use crate::server::state::AppState;
 
 /// Reply of `GET /api/v1/intents`.
+#[utoipa::path(get, path = "/api/v1/intents", tag = "intents", responses((status = 200, description = "Intent list", body = IntentListDto)))]
 #[instrument(skip(state))]
 pub async fn list_intents_handler(
     State(state): State<AppState>,
@@ -33,6 +34,17 @@ pub async fn list_intents_handler(
 }
 
 /// Reply of `POST /api/v1/intents`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/intents",
+    tag = "intents",
+    request_body = IntentWriteDto,
+    responses(
+        (status = 201, description = "Created intent", body = alice_core::dto::IntentDto),
+        (status = 400, description = "Invalid input"),
+        (status = 409, description = "The name is already in use")
+    )
+)]
 #[instrument(skip(state, body))]
 pub async fn create_intent_handler(
     State(state): State<AppState>,
@@ -48,6 +60,18 @@ pub async fn create_intent_handler(
 }
 
 /// Reply of `PUT /api/v1/intents/{id}`.
+#[utoipa::path(
+    put,
+    path = "/api/v1/intents/{id}", tag = "intents",
+    params(("id" = Uuid, Path, description = "Intent id")),
+    request_body = IntentWriteDto,
+    responses(
+        (status = 200, description = "Updated intent", body = alice_core::dto::IntentDto),
+        (status = 400, description = "Invalid input"),
+        (status = 404, description = "Intent not found"),
+        (status = 409, description = "The name is already in use")
+    )
+)]
 #[instrument(skip(state, body))]
 pub async fn update_intent_handler(
     State(state): State<AppState>,
@@ -64,6 +88,13 @@ pub async fn update_intent_handler(
 }
 
 /// Reply of `DELETE /api/v1/intents/{id}`.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/intents/{id}",
+    tag = "intents",
+    params(("id" = Uuid, Path, description = "Intent id")),
+    responses((status = 204, description = "Deleted"), (status = 404, description = "Intent not found"))
+)]
 #[instrument(skip(state))]
 pub async fn delete_intent_handler(
     State(state): State<AppState>,
@@ -85,6 +116,12 @@ pub async fn delete_intent_handler(
 ///
 /// The settings page runs the script of an entity here, so a user reads
 /// the values a script answers with before a turn reads them.
+#[utoipa::path(
+    post,
+    path = "/api/v1/intents/script/preview", tag = "intents",
+    request_body = ScriptPreviewWriteDto,
+    responses((status = 200, description = "The values the script answered with", body = ScriptPreviewDto))
+)]
 #[instrument(skip(state, body))]
 pub async fn preview_script_handler(
     State(state): State<AppState>,
@@ -99,6 +136,7 @@ pub async fn preview_script_handler(
 /// The endpoint adds the example intents that this catalog does not hold
 /// yet and answers with the whole catalog, so the settings page shows the
 /// new intents without a second read.
+#[utoipa::path(post, path = "/api/v1/intents/examples", tag = "intents", responses((status = 200, description = "The whole catalog after the write", body = IntentListDto)))]
 #[instrument(skip(state))]
 pub async fn create_examples_handler(
     State(state): State<AppState>,

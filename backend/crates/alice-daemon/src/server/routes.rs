@@ -17,7 +17,11 @@ use crate::server::resolver::{
     delete_gliner_model_handler, delete_local_model_handler, download_gliner_model_handler,
     download_local_model_handler, get_resolver_handler, preview_message_handler,
 };
-use crate::server::rest::{chat_handler, health_handler, status_handler};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+use crate::server::openapi::openapi_yaml_handler;
+use crate::server::rest::{chat_handler, health_alias_handler, health_handler, status_handler};
 use crate::server::settings::{get_settings_handler, put_settings_handler};
 use crate::server::socket::events_handler;
 use crate::server::state::AppState;
@@ -29,9 +33,16 @@ pub fn build_router(state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let swagger = SwaggerUi::new("/docs").url(
+        "/api/docs/openapi.json",
+        crate::server::openapi::ApiDoc::openapi(),
+    );
+
     Router::new()
         .route("/api/health", get(health_handler))
-        .route("/health", get(health_handler))
+        .route("/health", get(health_alias_handler))
+        .route("/api/docs/openapi.yaml", get(openapi_yaml_handler))
+        .merge(swagger)
         .route("/api/v1/status", get(status_handler))
         .route("/api/v1/conversations", get(list_conversations_handler))
         .route("/api/v1/conversations/{id}", get(get_conversation_handler))

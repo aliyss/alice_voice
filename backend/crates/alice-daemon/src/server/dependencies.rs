@@ -26,6 +26,7 @@ use crate::server::state::AppState;
 const LLAMA_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Reply of `GET /api/v1/dependencies`.
+#[utoipa::path(get, path = "/api/v1/dependencies", tag = "system", responses((status = 200, description = "State of the dependencies", body = DependenciesDto)))]
 #[instrument(skip(state))]
 pub async fn get_dependencies_handler(State(state): State<AppState>) -> impl IntoResponse {
     Json(read_dependencies(&state).await)

@@ -3,10 +3,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Daemon state that mirrors the backend state machine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum DaemonStateDto {
     Idle,
     Listening,
@@ -17,7 +18,7 @@ pub enum DaemonStateDto {
 }
 
 /// Reason why the daemon left the Listening state.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub enum StopReasonDto {
     SilenceTimeout,
     UserStopped,
@@ -26,7 +27,7 @@ pub enum StopReasonDto {
 }
 
 /// Reply of `GET /api/v1/status`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StatusDto {
     /// Current daemon state.
     pub state: DaemonStateDto,
@@ -37,7 +38,7 @@ pub struct StatusDto {
 }
 
 /// One event of the socket stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SystemEventDto {
     /// Time the daemon emitted the event, in ISO 8601.
     pub at: DateTime<Utc>,
@@ -46,7 +47,7 @@ pub struct SystemEventDto {
 }
 
 /// Payload of a `SystemEventDto`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type")]
 pub enum SystemEventPayloadDto {
     WakeDetected {
@@ -122,8 +123,9 @@ pub enum SystemEventPayloadDto {
 }
 
 /// The stream a command wrote one line to.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub enum OutputStreamDto {
     /// Standard output.
     Stdout,
@@ -132,8 +134,9 @@ pub enum OutputStreamDto {
 }
 
 /// Speaker of one chat message.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub enum ChatRoleDto {
     User,
     Assistant,
@@ -158,8 +161,9 @@ impl ChatRoleDto {
 }
 
 /// One stored turn of a conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ChatMessageDto {
     /// Stable message identifier.
     pub id: Uuid,
@@ -188,8 +192,9 @@ pub struct ChatMessageDto {
 /// llama.cpp server or on the built in GLiNER model, so a turn reports
 /// the engine of each step. The rest of the metadata is what the daemon
 /// then ran, so the transcript can explain a stored turn.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct MessageMetaDto {
     /// The engine that chose the intent, or null when none chose one.
     pub intent_engine: Option<String>,
@@ -237,8 +242,9 @@ pub struct MessageMetaDto {
 /// carries the reader every stage ran and the short list it read, which is
 /// what a reader of the transcript needs to see why a message met an
 /// intent, met none, or was answered by a stage it did not expect.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct MessageRouteDto {
     /// The stage that decided the turn, or null when the router refused.
     pub stage: Option<String>,
@@ -256,8 +262,9 @@ pub struct MessageRouteDto {
 /// Every stage reports what it read and how it ended, so a turn that a
 /// model answered and a turn the words answered are told apart, and a
 /// stage that fell back to its cheaper reader says so.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct MessageRouteStepDto {
     /// The stage: `fast_path`, `retrieve`, `decide`, or `extract`.
     pub stage: String,
@@ -283,8 +290,9 @@ pub struct MessageRouteStepDto {
 /// A value is read by one reader of the pipeline, and which one read it is
 /// what tells a value the daemon proved from a value a model guessed, so
 /// the read is reported next to the value it produced.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct MessageEntityDto {
     /// Name of the entity, for example `city`.
     pub name: String,
@@ -312,8 +320,9 @@ pub struct MessageEntityDto {
 }
 
 /// One intent the retrieval pass offered for a turn.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct MessageCandidateDto {
     /// Name of the intent.
     pub name: String,
@@ -324,8 +333,9 @@ pub struct MessageCandidateDto {
 }
 
 /// One conversation of the daemon. The conversation owns its message history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ConversationDto {
     /// Stable conversation identifier.
     pub id: Uuid,
@@ -338,16 +348,18 @@ pub struct ConversationDto {
 }
 
 /// Reply of `GET /api/v1/conversations`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ConversationListDto {
     /// Conversations, most recently updated first.
     pub items: Vec<ConversationDto>,
 }
 
 /// Reply of `GET /api/v1/conversations/{id}`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ConversationDetailDto {
     /// The conversation.
     pub conversation: ConversationDto,
@@ -356,7 +368,9 @@ pub struct ConversationDetailDto {
 }
 
 /// Query of `GET /api/v1/conversations`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+#[allow(clippy::needless_maybe_sized)]
 pub struct ConversationQuery {
     /// Maximum items to return.
     pub limit: Option<u64>,
@@ -370,8 +384,9 @@ impl ConversationQuery {
 }
 
 /// Body of `POST /api/v1/chat`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ChatRequestDto {
     /// Text the user typed.
     pub text: String,
@@ -380,8 +395,9 @@ pub struct ChatRequestDto {
 }
 
 /// Reply of `POST /api/v1/chat`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ChatReplyDto {
     /// True when the daemon stored the turn, false when the queue is off.
     pub stored: bool,
@@ -398,8 +414,9 @@ pub struct ChatReplyDto {
 /// A preview reads one message the way a turn would and runs nothing, so
 /// the settings page can show the route of a sentence before the user
 /// sends it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ResolverPreviewRequestDto {
     /// The message to read.
     pub text: String,
@@ -412,8 +429,9 @@ pub struct ResolverPreviewRequestDto {
 /// daemon really handled, minus the run. The intent it met, the reader
 /// that read every value, and the route the message took are the report a
 /// user tunes the pipeline by.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ResolverPreviewDto {
     /// The message the daemon read.
     pub text: String,
@@ -431,7 +449,7 @@ pub struct ResolverPreviewDto {
 }
 
 /// Health reply of `GET /api/health`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct HealthDto {
     /// Service status.
     pub status: String,
@@ -440,8 +458,9 @@ pub struct HealthDto {
 }
 
 /// Reply of `GET /api/v1/settings` and `PUT /api/v1/settings`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct SettingsDto {
     /// Whether the queue stores messages.
     pub queue_enabled: bool,
@@ -503,8 +522,9 @@ pub struct SettingsDto {
 
 /// Body of `PUT /api/v1/settings`.
 /// A null field keeps the stored value.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct SettingsUpdateDto {
     /// Whether the queue stores messages.
     pub queue_enabled: Option<bool>,
@@ -673,8 +693,9 @@ mod budget_tests {
 /// makes it work. The settings page keeps a control usable only when
 /// every place it needs answers, so the user never saves a value that
 /// cannot take effect.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct DependencyDto {
     /// Short key of the dependency, for example `database`.
     pub key: String,
@@ -687,8 +708,9 @@ pub struct DependencyDto {
 }
 
 /// The llama.cpp server as the settings page sees it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LlamaDependencyDto {
     /// Whether the server answers.
     pub reachable: bool,
@@ -706,8 +728,9 @@ pub struct LlamaDependencyDto {
 ///
 /// The reply needs no database, so the settings page can tell a database
 /// that is down from a daemon that is down.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct DependenciesDto {
     /// The values the daemon starts from.
     /// The settings page shows them while the database does not answer.
@@ -722,8 +745,9 @@ pub struct DependenciesDto {
 
 /// Reply of `GET /api/v1/resolver`.
 /// This tells the settings page which engines are ready to work.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ResolverStatusDto {
     /// The engine that reads the intent of a message.
     pub backend: String,
@@ -742,8 +766,9 @@ pub struct ResolverStatusDto {
 /// The router has a stage per setting, and each stage names the reader it
 /// would use right now. The settings page shows that state, so a stage
 /// that cannot run its reader says so before a turn depends on it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct RouterStatusDto {
     /// Whether the deterministic pass reads the message first.
     pub fast_path: bool,
@@ -790,8 +815,9 @@ pub struct RouterStatusDto {
 }
 
 /// Configuration of the llama.cpp resolver.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LlamaStatusDto {
     /// Base URL of the llama.cpp server.
     pub base_url: String,
@@ -802,8 +828,9 @@ pub struct LlamaStatusDto {
 }
 
 /// State of the built in GLiNER models.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct GlinerStoreDto {
     /// Identifier of the selected model.
     pub model: String,
@@ -828,8 +855,9 @@ pub struct GlinerStoreDto {
 }
 
 /// One GLiNER model the daemon can download.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct GlinerModelDto {
     /// Identifier of the model, for example `gliner_small-v2.1`.
     pub id: String,
@@ -844,8 +872,9 @@ pub struct GlinerModelDto {
 }
 
 /// The GLiNER download that runs right now.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct GlinerDownloadDto {
     /// Identifier of the model.
     pub model: String,
@@ -860,8 +889,9 @@ pub struct GlinerDownloadDto {
 }
 
 /// One built in model of the router the daemon can download.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LocalModelDto {
     /// Identifier of the model, for example `bge-small-en-v1.5`.
     pub id: String,
@@ -878,8 +908,9 @@ pub struct LocalModelDto {
 }
 
 /// The download of one built in model of the router that runs right now.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LocalDownloadDto {
     /// Identifier of the model.
     pub model: String,
@@ -894,8 +925,9 @@ pub struct LocalDownloadDto {
 }
 
 /// State of the built in models of the router.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LocalStoreDto {
     /// Directory that holds the downloaded models.
     pub models_dir: String,
@@ -906,8 +938,9 @@ pub struct LocalStoreDto {
 }
 
 /// How many labels the intent configuration adds up to.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct LabelBudgetDto {
     /// Number of labels a GLiNER model reads for this configuration.
     /// One label per intent, plus one per entity, plus one per value of
@@ -932,8 +965,9 @@ pub struct LabelBudgetDto {
 }
 
 /// The kind of one entity of an intent.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub enum EntityKindDto {
     /// The entity takes a value the user says freely.
     Open,
@@ -972,8 +1006,9 @@ impl EntityKindDto {
 }
 
 /// One entity of an intent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct IntentEntityDto {
     /// Stable entity identifier.
     pub id: Uuid,
@@ -1004,8 +1039,9 @@ pub fn required_by_default() -> bool {
 }
 
 /// One intent of the daemon. An intent runs one shell command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct IntentDto {
     /// Stable intent identifier.
     pub id: Uuid,
@@ -1030,16 +1066,18 @@ pub struct IntentDto {
 }
 
 /// Reply of `GET /api/v1/intents`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct IntentListDto {
     /// The intents, in name order.
     pub items: Vec<IntentDto>,
 }
 
 /// One entity of the body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct IntentEntityWriteDto {
     /// Name of the entity.
     pub name: String,
@@ -1058,8 +1096,9 @@ pub struct IntentEntityWriteDto {
 
 /// Body of `POST /api/v1/intents` and `PUT /api/v1/intents/{id}`.
 /// The daemon replaces the entity set of the intent with the sent one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct IntentWriteDto {
     /// Unique name of the intent.
     pub name: String,
@@ -1076,8 +1115,9 @@ pub struct IntentWriteDto {
 }
 
 /// Body of `POST /api/v1/intents/script/preview`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ScriptPreviewWriteDto {
     /// The shell command the daemon runs for the preview.
     pub script: String,
@@ -1087,8 +1127,9 @@ pub struct ScriptPreviewWriteDto {
 ///
 /// The settings page shows the values a script answers with, so a user
 /// who writes one reads the list before it reaches a turn.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(rename_all = "camelCase")]
 pub struct ScriptPreviewDto {
     /// The values the script wrote, in the order it wrote them.
     pub values: Vec<String>,

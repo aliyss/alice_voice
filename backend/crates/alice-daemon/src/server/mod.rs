@@ -4,6 +4,7 @@
 pub mod conversations;
 pub mod dependencies;
 pub mod intents;
+pub mod openapi;
 pub mod reply;
 pub mod resolver;
 pub mod rest;

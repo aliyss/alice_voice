@@ -13,8 +13,21 @@ use crate::server::reply::{bad_request, database_failed, error_reply, RestError}
 use crate::server::state::AppState;
 
 /// Reply of `GET /api/health` and `GET /health`.
+#[utoipa::path(get, path = "/api/health", tag = "system", responses((status = 200, description = "Health reply", body = HealthDto)))]
 #[instrument(skip(state))]
 pub async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
+    health_reply(state).await
+}
+
+/// Alias of `GET /api/health` at `GET /health`.
+#[utoipa::path(get, path = "/health", tag = "system", responses((status = 200, description = "Health reply", body = HealthDto)))]
+#[instrument(skip(state))]
+pub async fn health_alias_handler(State(state): State<AppState>) -> impl IntoResponse {
+    health_reply(state).await
+}
+
+/// Build the health reply.
+async fn health_reply(state: AppState) -> impl IntoResponse {
     let body = HealthDto {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -24,6 +37,7 @@ pub async fn health_handler(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 /// Reply of `GET /api/v1/status`.
+#[utoipa::path(get, path = "/api/v1/status", tag = "system", responses((status = 200, description = "Status reply", body = StatusDto)))]
 #[instrument(skip(state))]
 pub async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let body = StatusDto {
@@ -42,6 +56,17 @@ pub async fn status_handler(State(state): State<AppState>) -> impl IntoResponse 
 ///
 /// The daemon stores the turn in a conversation when the queue is on. It
 /// answers without a store when the queue is off.
+#[utoipa::path(
+    post,
+    path = "/api/v1/chat", tag = "chat",
+    request_body = ChatRequestDto,
+    responses(
+        (status = 201, description = "Handled turn", body = ChatReplyDto),
+        (status = 400, description = "Invalid input"),
+        (status = 404, description = "Conversation not found"),
+        (status = 413, description = "Message too long")
+    )
+)]
 #[instrument(skip(state, body))]
 pub async fn chat_handler(
     State(state): State<AppState>,

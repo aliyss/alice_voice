@@ -20,13 +20,19 @@ use alice_core::dto::{
     MessageRouteStepDto,
 };
 
+use crate::catalog::{CatalogRanker, CatalogStore, CommandEntry};
 use crate::intent::matcher::{best_match, best_mention, mentions_of, words_of};
 use crate::intent::{EntityList, EntityScripts, IntentService};
+use crate::resolver::answer::{
+    build_answer_prompt, build_script_prompt, build_triage_prompt, parse_script, parse_triage,
+    AnswerPrompt, Fallback, ScriptProposal, Triage, FALLBACK_SCHEMA_NAME, SCRIPT_SCHEMA_NAME,
+};
 use crate::resolver::client::{AnswerRequest, DecisionRequest, LlamaClient};
 use crate::resolver::decision::{Decision, DecisionOption};
 use crate::resolver::error::ResolveError;
 use crate::resolver::gliner::GlinerResolver;
-use crate::resolver::local::LocalEngine;
+use crate::resolver::local::laya::ChoiceOutcome;
+use crate::resolver::local::{laya::ChoiceQuestion, LayaEngine, LocalEngine};
 use crate::resolver::prompt::build_prompt;
 use crate::resolver::router::{self, Route, RouteInput, RouteModel, RouteTrace, Router};
 use crate::resolver::values::{build_values_prompt, parse_values};
@@ -38,8 +44,78 @@ pub const NO_INTENT_OPTION: &str = "__none__";
 /// The name of the answer schema of a values request.
 const VALUES_SCHEMA_NAME: &str = "entity_values";
 
+/// The name of the stage that chooses one intent of the catalog.
+const STEP_DECIDE: &str = "decide";
+
 /// The name of the stage that reads the values of the intent that won.
 const STEP_EXTRACT: &str = "extract";
+
+/// The name of the stage that answers a message no intent matched.
+const STEP_ANSWER: &str = "answer";
+
+/// The name of the answer of a fallback turn in words. The request carries
+/// no schema, so the name reaches no server and only labels the read.
+const ANSWER_SCHEMA_NAME: &str = "fallback_words";
+/// The state the built in decision model reads before a fallback turn.
+///
+/// The message alone reaches the question, without the earlier turns and
+/// without the memory of the daemon. They are the transcript of a
+/// conversation rather than a fact about the message in front of the
+/// model, and the transcript moves the answer: the very same message is
+/// read as an answer in words alone at p=0.88 and as a task of the machine
+/// at p=0.84 once one earlier turn ran a command. The memory bends the
+/// choice the same way, because a state of remembered facts about a
+/// machine reads as a message about a machine.
+///
+/// A message that needs the earlier turns to be read at all, such as `do
+/// that again`, is therefore one the model reads without confidence, and
+/// the floor below hands it to the language model, which reads the whole
+/// conversation.
+fn need_state(request: &ResolveRequest) -> String {
+    request.text.trim().to_string()
+}
+
+/// The question the built in decision model answers before a fallback turn.
+///
+/// The question is written as the yes/no reading of the choice, and the
+/// two answers read as complete replies to it rather than as nouns the
+/// question names. This is how the reference renders its own yes/no
+/// questions, and it is what the model was measured on: a question that
+/// only names the two nouns (`What does the message ask for?` with the
+/// answers `an answer in words` / `a task done on this computer`) leaves
+/// the model near a coin flip on every message, while this wording
+/// separates a greeting from a command with a wide margin.
+pub(crate) const NEED_INSTRUCTIONS: &str =
+    "Does the message ask for something done on this computer?";
+
+/// The position of the script answer among the two answers of that
+/// question. The other position is the answer in words, so a model that
+/// reports any other position wants words.
+pub(crate) const NEED_SCRIPT_INDEX: usize = 1;
+
+/// The least probability the chosen answer needs before the daemon
+/// believes it.
+///
+/// The answers of the question above separate by a wide margin on the
+/// messages the fallback really meets, so a low probability is a message
+/// the model found ambiguous rather than a close call the words of the
+/// message decide. Such a turn goes back to the language model, which is
+/// the reader the daemon used before the built in one: the daemon pays
+/// for the model only when the model is the only reader that can say.
+pub(crate) const NEED_FLOOR: f32 = 0.6;
+
+/// The name of the stage that writes a script for a message no intent
+/// matched and the model asked a script about.
+const STEP_SCRIPT: &str = "script";
+
+///
+/// What one turn reports while it runs.
+///
+/// The resolver names every stage as it starts, so a surface shows the
+/// step the daemon is on while a turn runs. The reader behind a stage
+/// names itself in the event it already emits, so a stage notice holds a
+/// name and one sentence about the reader's work and nothing else.
+pub type StageSink<'a> = &'a mut (dyn FnMut(&str, &str) + Send);
 
 /// The reader of the values the deterministic pass proved.
 const READ_FAST_PATH: &str = "fast_path";
@@ -59,6 +135,10 @@ const READ_MODEL: &str = "model";
 /// The reader that left the value to the lists alone.
 const READ_LISTS: &str = "lists";
 
+/// The reader that asked the built in decision model to choose one value
+/// of the list an entity offers.
+const READ_CHOICE: &str = "choice";
+
 /// One earlier turn the resolver reads as context.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextTurn {
@@ -75,6 +155,13 @@ pub struct ResolveRequest {
     pub text: String,
     /// The earlier turns of the conversation, oldest first.
     pub history: Vec<ContextTurn>,
+    /// What the librarian remembers about the user, as plain text.
+    ///
+    /// The seed belongs to the branch that no intent reaches: the model
+    /// reads it when it answers a message the catalog could not match,
+    /// and the decision and the value extraction read the message alone.
+    /// It is empty when the librarian is off or the store holds nothing.
+    pub memory_seed: String,
 }
 
 /// The intent the resolver chose.
@@ -326,15 +413,45 @@ impl EntityRead {
     }
 }
 
-/// The reader of every value one engine read.
+/// The reader of every value one engine read, named after the engine.
 fn origins_of(
+    engine: ResolverEngine,
+    model: Option<String>,
+    values: &BTreeMap<String, String>,
+) -> BTreeMap<String, EntityRead> {
+    origins_with(
+        EntityRead::of_engine(engine, None).source,
+        engine,
+        model,
+        values,
+    )
+}
+
+/// The reader of every value one engine read, under a name of the caller.
+///
+/// The name is passed rather than derived from the engine, because two
+/// readers of the same engine can read a value differently and a turn
+/// names the one that really ran.
+fn origins_with(
+    source: &'static str,
     engine: ResolverEngine,
     model: Option<String>,
     values: &BTreeMap<String, String>,
 ) -> BTreeMap<String, EntityRead> {
     values
         .keys()
-        .map(|name| (name.clone(), EntityRead::of_engine(engine, model.clone())))
+        .map(|name| {
+            (
+                name.clone(),
+                EntityRead {
+                    source,
+                    engine: Some(engine),
+                    model: model.clone(),
+                    read: None,
+                    score: None,
+                },
+            )
+        })
         .collect()
 }
 
@@ -359,6 +476,80 @@ fn record_origins(
             name.clone(),
             reader.clone().reading(before.get(name).cloned()),
         );
+    }
+}
+
+/// What one message no intent matched needs from the daemon.
+///
+/// The built in decision model answers the choice as one typed question,
+/// so the language model is asked for an answer or for a script and never
+/// for the choice between them. A model that cannot answer the choice
+/// leaves it to the language model, which is the reader the daemon used
+/// before the built in one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FallbackNeed {
+    /// The user wants an answer in words.
+    Answer,
+    /// The user wants a task done on this machine, so a script.
+    Script,
+    /// The built in model could not answer the choice.
+    Unknown,
+}
+
+/// The two answers of the question a fallback turn asks first.
+///
+/// The order is the order of the outcome, so position `NEED_SCRIPT_INDEX`
+/// is the script the daemon writes and the other answer is the words the
+/// model writes. Each answer reads as a complete reply to the question
+/// rather than as a noun the question names, and neither carries a detail:
+/// the choice is short and the two answers say between them what the
+/// question asks, while a detail per option only spends the budget the
+/// model shares among the options.
+pub(crate) fn need_options() -> Vec<(String, String)> {
+    vec![
+        (
+            "no, it asks for an answer in words".to_string(),
+            String::new(),
+        ),
+        (
+            "yes, it asks for a task of this computer".to_string(),
+            String::new(),
+        ),
+    ]
+}
+
+/// One sentence about the answer of a fallback turn.
+///
+/// The memory reaches this branch alone, so the sentence names it only
+/// when the turn really carries a seed of it.
+fn answer_note(request: &ResolveRequest) -> &'static str {
+    if request.memory_seed.trim().is_empty() {
+        "answering with the language model"
+    } else {
+        "answering with the language model, with the memory of the daemon"
+    }
+}
+
+/// One sentence about the reader the extraction stage is running.
+///
+/// The sentence names the intent and the reader, so a surface says which
+/// values are being read and by what while the stage works. An open entity
+/// has one value the user said rather than a list, so only the readers
+/// that can read one name the intent.
+fn extract_note(engine: ExtractEngine, intent: &str) -> String {
+    match engine {
+        ExtractEngine::Lists => {
+            format!("reading the values of `{intent}` out of the lists it carries")
+        }
+        ExtractEngine::Spans => {
+            format!("finding the span of every label of `{intent}` with the built in model")
+        }
+        ExtractEngine::Laya => format!(
+            "choosing one value of every list of `{intent}` with the built in decision model"
+        ),
+        ExtractEngine::Generative => {
+            format!("reading the values of `{intent}` with the language model")
+        }
     }
 }
 
@@ -401,6 +592,18 @@ pub enum Resolution {
         /// How the layered router read the turn, or empty for the other
         /// engines.
         route: RouteReport,
+        /// The reply the language model wrote for the message, or null
+        /// when the fallback is off or the model did not answer.
+        ///
+        /// The daemon runs no command of a turn without an intent, so a
+        /// message the catalog does not hold is answered in words alone
+        /// when the fallback is on.
+        reply: Option<String>,
+        /// The script the model wrote for the message, or null when the
+        /// model answered in words, the fallback is off, or the script
+        /// fallback is off. The daemon runs the script only after the
+        /// user approves it.
+        proposal: Option<ScriptProposal>,
     },
 }
 
@@ -463,8 +666,13 @@ pub struct ResolverService {
     config: Arc<CoreConfig>,
     /// The live lists of the script entities.
     scripts: EntityScripts,
+    /// The built in decision model, shared by the decision stage and the
+    /// extraction stage.
+    laya: LayaEngine,
     /// The layered router, its built in models, and the vectors it read.
     router: Router,
+    /// The commands of the machine, for the script fallback.
+    catalog: CatalogStore,
 }
 
 impl ResolverService {
@@ -478,7 +686,20 @@ impl ResolverService {
         config: Arc<CoreConfig>,
         scripts: EntityScripts,
     ) -> Self {
-        let router = Router::new(client.clone(), local.clone(), Arc::clone(&config));
+        // The built in decision model reads the same files as the other
+        // built in models of the router, so it borrows their store rather
+        // than a second one of its own.
+        let laya = LayaEngine::new(local.store(), config.resolver.gliner.threads);
+        let router = Router::new(
+            client.clone(),
+            local.clone(),
+            laya.clone(),
+            Arc::clone(&config),
+        );
+        let catalog = CatalogStore::with_limit(
+            Duration::from_secs(config.resolver.catalog.ttl_secs),
+            config.resolver.catalog.max_entries,
+        );
         Self {
             client,
             gliner,
@@ -486,7 +707,9 @@ impl ResolverService {
             settings,
             config,
             scripts,
+            laya,
             router,
+            catalog,
         }
     }
 
@@ -495,10 +718,16 @@ impl ResolverService {
     /// The service reads the stored settings first, so a change on the
     /// settings page applies to the next message without a restart. A
     /// settings read that fails falls back to the configured defaults.
+    ///
+    /// Every stage names itself on `on_stage` as it starts, so the caller
+    /// shows the work of the turn rather than one label for the whole
+    /// read. A stage that reads a model can take seconds, so the name of
+    /// the step is what tells a reader that the daemon is working.
     pub async fn resolve<F>(
         &self,
         request: &ResolveRequest,
         mut on_delta: F,
+        on_stage: StageSink<'_>,
     ) -> Result<Resolution, ResolveError>
     where
         F: FnMut(&str) + Send,
@@ -518,6 +747,7 @@ impl ResolverService {
         match backend {
             // A llama.cpp server reads the intent and the values.
             ResolverBackend::Llama => {
+                on_stage(STEP_DECIDE, "asking the language model to name the intent");
                 let Resolution::Matched(mut matched) = self
                     .decide_intent(&intents, request, &llama, &mut on_delta)
                     .await?
@@ -526,9 +756,15 @@ impl ResolverService {
                         engine: ResolverEngine::Llama,
                         model: Some(llama.model.clone()),
                         route: RouteReport::default(),
+                        reply: None,
+                        proposal: None,
                     });
                 };
                 if let Some(intent) = intents.iter().find(|intent| intent.id == matched.id) {
+                    on_stage(
+                        STEP_EXTRACT,
+                        "reading the values of the intent with the language model",
+                    );
                     let lists = self.scripts.lists(intent).await;
                     let offered = self.scripts.offered_values(&lists);
                     matched.values = self
@@ -556,6 +792,10 @@ impl ResolverService {
 
             // The built in GLiNER model reads the intent and the values.
             ResolverBackend::Gliner => {
+                on_stage(
+                    STEP_DECIDE,
+                    "matching the labels of the catalog with the built in GLiNER model",
+                );
                 let resolution = self
                     .gliner
                     .resolve(
@@ -605,6 +845,7 @@ impl ResolverService {
             // The llama.cpp server names the intent, GLiNER reads the
             // values of the entities that intent needs.
             ResolverBackend::Hybrid => {
+                on_stage(STEP_DECIDE, "asking the language model to name the intent");
                 let Resolution::Matched(mut matched) = self
                     .decide_intent(&intents, request, &llama, &mut on_delta)
                     .await?
@@ -613,9 +854,15 @@ impl ResolverService {
                         engine: ResolverEngine::Llama,
                         model: Some(llama.model.clone()),
                         route: RouteReport::default(),
+                        reply: None,
+                        proposal: None,
                     });
                 };
                 if let Some(intent) = intents.iter().find(|intent| intent.id == matched.id) {
+                    on_stage(
+                        STEP_EXTRACT,
+                        "reading the values of the intent, with GLiNER and with the language model",
+                    );
                     let lists = self.scripts.lists(intent).await;
                     let offered = self.scripts.offered_values(&lists);
                     let (mut values, engine) = self
@@ -654,7 +901,7 @@ impl ResolverService {
             // message first, then a ranking of the whole catalog, then a
             // decision, then the values of the intent that won.
             ResolverBackend::Router => {
-                self.route_message(&intents, request, &llama, &gliner, &mut on_delta)
+                self.route_message(&intents, request, &llama, &gliner, &mut on_delta, on_stage)
                     .await
             }
         }
@@ -672,6 +919,7 @@ impl ResolverService {
         llama: &LlamaSettings,
         gliner: &GlinerSettings,
         on_delta: &mut F,
+        on_stage: StageSink<'_>,
     ) -> Result<Resolution, ResolveError>
     where
         F: FnMut(&str) + Send,
@@ -687,7 +935,13 @@ impl ResolverService {
         // that reads the scores of the ranking, reads no model at all, so
         // the report names none of them.
         let model_of_stage = |stage: RouterStage| {
-            Self::read_model_of(stage, config.decide, &model, &config.rerank_model)
+            Self::read_model_of(
+                stage,
+                config.decide,
+                &model,
+                &config.rerank_model,
+                &config.laya_model,
+            )
         };
 
         // The deterministic pass reads the lists of the documents whose
@@ -708,6 +962,7 @@ impl ResolverService {
                 },
                 &mut trace,
                 on_delta,
+                on_stage,
             )
             .await?;
         let mut report = RouteReport::read(&route, &trace, intents);
@@ -716,10 +971,20 @@ impl ResolverService {
             Route::Chosen { index, values, .. } => (*index, values.clone()),
             Route::Refused { stage, reason, .. } => {
                 tracing::debug!(reason = %reason, "the router read no intent");
+                let (reply, proposal) = match self
+                    .fallback(&config, request, llama, on_delta, on_stage)
+                    .await
+                {
+                    Some(Fallback::Answer(text)) => (Some(text), None),
+                    Some(Fallback::Script(script)) => (None, Some(script)),
+                    None => (None, None),
+                };
                 return Ok(Resolution::Unmatched {
                     engine: ResolverEngine::Router,
                     model: model_of_stage(*stage),
                     route: report,
+                    reply,
+                    proposal,
                 });
             }
         };
@@ -728,6 +993,8 @@ impl ResolverService {
                 engine: ResolverEngine::Router,
                 model: model_of_stage(RouterStage::None),
                 route: report,
+                reply: None,
+                proposal: None,
             });
         };
         let (stage, confidence) = match &route {
@@ -739,19 +1006,13 @@ impl ResolverService {
         let intent_model = model_of_stage(stage);
 
         // The values of the intent that won, read by the extraction stage.
+        on_stage(STEP_EXTRACT, &extract_note(config.extract, &intent.name));
         let extracts_at = Instant::now();
         let lists = self.scripts.lists(intent).await;
         let offered = self.scripts.offered_values(&lists);
         let readers = Readers { llama, gliner };
         let (mut values, engine) = self
-            .read_router_values(
-                intent,
-                request,
-                &readers,
-                &offered,
-                config.extract,
-                on_delta,
-            )
+            .read_router_values(intent, request, &readers, &offered, &config, on_delta)
             .await;
         let entities: Vec<String> = intent
             .entities
@@ -759,8 +1020,29 @@ impl ResolverService {
             .map(|entity| entity.name.clone())
             .collect();
         let value_engine = value_engine_of(engine, &entities);
-        let value_model = read_model(value_engine, &gliner.model, &llama.model);
-        let mut origins = origins_of(engine, value_model.clone(), &values);
+        // The choice of the built in decision model reads the values of a
+        // list, so a turn that chose them names that model rather than the
+        // span reader, which would have read a value of another shape.
+        let inner_model = if matches!(engine, ResolverEngine::Gliner) {
+            &gliner.model
+        } else {
+            match config.extract {
+                ExtractEngine::Laya => &config.laya_model,
+                _ => &gliner.model,
+            }
+        };
+        let value_model = read_model(value_engine, inner_model, &llama.model);
+        // The built in decision model reads values the lists engine reads
+        // too, so the reader is named after what really chose them: the
+        // model answers a choice rather than matching the rules.
+        let reader = if matches!(config.extract, ExtractEngine::Laya)
+            && matches!(engine, ResolverEngine::Router)
+        {
+            READ_CHOICE
+        } else {
+            EntityRead::of_engine(engine, None).source
+        };
+        let mut origins = origins_with(reader, engine, value_model.clone(), &values);
 
         // A value the deterministic pass proved names an entry of a list
         // the daemon holds, so it wins over a value another reader guessed
@@ -794,7 +1076,7 @@ impl ResolverService {
         // The extraction stage runs here rather than in the router, so it
         // writes its own step into the report of the turn.
         report.record_extraction(
-            EntityRead::of_engine(engine, None).source,
+            reader,
             value_model.clone(),
             values_summary(intent, &origins),
             extracts_at.elapsed().as_millis() as u64,
@@ -816,20 +1098,351 @@ impl ResolverService {
         }))
     }
 
+    /// Answer a message no intent matched, in words or with a script.
+    ///
+    /// The fallback is a setting of the router, so a user may keep the
+    /// plain refusal. The daemon first reads what the message needs with
+    /// its built in decision model, and the answers of the two kinds never
+    /// share a request: a message that wants words is answered in words,
+    /// and a message that wants a task makes the daemon read and rank the
+    /// catalog before it asks for a script. A greeting therefore never
+    /// pays for a catalog of thousands of names, and no message pays for
+    /// a request that only says which of the two it is.
+    ///
+    /// Every step reads the earlier turns as the context of the message,
+    /// so a follow-up question is answered in the conversation it belongs
+    /// to. A model that does not answer, an empty answer, and a script
+    /// without a body all leave the turn with the plain refusal rather
+    /// than an empty reply.
+    async fn fallback<F>(
+        &self,
+        config: &RouterConfig,
+        request: &ResolveRequest,
+        llama: &LlamaSettings,
+        on_delta: &mut F,
+        on_stage: StageSink<'_>,
+    ) -> Option<Fallback>
+    where
+        F: FnMut(&str) + Send,
+    {
+        if !config.fallback_llm {
+            return None;
+        }
+
+        // 1. What the message needs. The built in decision model answers
+        //    the choice as one typed question, so the language model is
+        //    asked for the answer or for the script and never for the
+        //    choice between them. A message that may not become a script
+        //    needs no choice at all.
+        let need = if config.script_fallback {
+            self.fallback_need(config, request).await
+        } else {
+            FallbackNeed::Answer
+        };
+
+        // 2. The script of a message that asks for a task of the machine.
+        if need == FallbackNeed::Script {
+            return self
+                .write_script(config, request, llama, on_delta, on_stage)
+                .await;
+        }
+
+        // 3. The words of a message that wants an answer. The request
+        //    carries no schema, so the model answers the user rather than
+        //    filling a field of a report.
+        if need == FallbackNeed::Answer {
+            on_stage(STEP_ANSWER, answer_note(request));
+            return self
+                .answer_words(llama, request, on_delta)
+                .await
+                .map(Fallback::Answer);
+        }
+
+        // 4. The built in model could not answer the choice, so the
+        //    language model reads the choice and the answer at once, which
+        //    is what the daemon did before the built in model read it.
+        on_stage(
+            STEP_ANSWER,
+            "asking the language model what the message needs",
+        );
+        let state = render_state(request);
+        let prompt = build_triage_prompt(&state)?;
+        let content = self
+            .answer(llama, prompt, FALLBACK_SCHEMA_NAME, on_delta)
+            .await?;
+        match parse_triage(&content)? {
+            Triage::Answer(text) => Some(Fallback::Answer(text)),
+            Triage::Script => {
+                self.write_script(config, request, llama, on_delta, on_stage)
+                    .await
+            }
+        }
+    }
+
+    /// Read what a message no intent matched needs.
+    ///
+    /// The built in decision model reads the message and one typed
+    /// question: does the user want words, or a task done on this machine?
+    /// The model is a non-autoregressive encoder, so the choice costs one
+    /// forward pass over the message alone: no prompt of the machine's
+    /// commands is written and no sentence is generated before the choice
+    /// is known. A model that is not on disk, a device that cannot run it,
+    /// and an inference that fails all leave the choice to the language
+    /// model, which is the reader the daemon used before this one.
+    async fn fallback_need(&self, config: &RouterConfig, request: &ResolveRequest) -> FallbackNeed {
+        let engine = self.laya.clone();
+        let model = config.laya_model.clone();
+        let device = config.local_device;
+        let state = need_state(request);
+        let outcome = tokio::task::spawn_blocking(move || {
+            engine.decide(&model, device, &state, NEED_INSTRUCTIONS, &need_options())
+        })
+        .await;
+        let outcome = match outcome {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    error = %err,
+                    "the built in decision model did not read what the message needs"
+                );
+                return FallbackNeed::Unknown;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "the built in decision model did not read what the message needs"
+                );
+                return FallbackNeed::Unknown;
+            }
+        };
+        let needs_a_script = outcome.index == NEED_SCRIPT_INDEX;
+        tracing::debug!(
+            probability = outcome.probability,
+            needs_a_script,
+            "the built in decision model read what the message needs"
+        );
+        // A model that is not sure leaves the choice to the language model
+        // rather than sending a greeting to the machine's commands or a
+        // command to the words of the model.
+        if outcome.probability < NEED_FLOOR {
+            tracing::debug!(
+                probability = outcome.probability,
+                floor = NEED_FLOOR,
+                "the built in decision model found the message ambiguous"
+            );
+            return FallbackNeed::Unknown;
+        }
+        if needs_a_script {
+            FallbackNeed::Script
+        } else {
+            FallbackNeed::Answer
+        }
+    }
+
+    /// Ask the fallback model to answer the message in words.
+    ///
+    /// The request carries no answer schema, so the model writes the answer
+    /// itself. An empty answer reads as no answer, because a turn that
+    /// answers the user with nothing is worse than the plain refusal.
+    async fn answer_words<F>(
+        &self,
+        llama: &LlamaSettings,
+        request: &ResolveRequest,
+        on_delta: &mut F,
+    ) -> Option<String>
+    where
+        F: FnMut(&str) + Send,
+    {
+        let prompt = build_answer_prompt(&render_state(request))?;
+        let content = self
+            .answer(llama, prompt, ANSWER_SCHEMA_NAME, on_delta)
+            .await?;
+        let answer = content.trim();
+        if answer.is_empty() {
+            tracing::warn!("the fallback answered a message no intent matched with nothing");
+            return None;
+        }
+        tracing::info!(
+            history = request.history.len(),
+            thinking = self.config.resolver.thinking,
+            "the fallback answered a message no intent matched in words"
+        );
+        Some(answer.to_string())
+    }
+
+    /// Write the script of a message that asks for a task of the machine.
+    ///
+    /// The commands of the machine are read and ranked here and not before
+    /// the message that wants them, so the cost of the catalog belongs to
+    /// the message that really wants a script.
+    async fn write_script<F>(
+        &self,
+        config: &RouterConfig,
+        request: &ResolveRequest,
+        llama: &LlamaSettings,
+        on_delta: &mut F,
+        on_stage: StageSink<'_>,
+    ) -> Option<Fallback>
+    where
+        F: FnMut(&str) + Send,
+    {
+        on_stage(
+            STEP_SCRIPT,
+            "ranking the commands of the machine and writing a script for the message",
+        );
+        // The state is the message with the memory of the daemon and the
+        // earlier turns. The caller renders it for its own question, and
+        // this step renders its own rather than carrying a second copy of
+        // the same string as an argument.
+        let state = render_state(request);
+        let catalog_started = Instant::now();
+        let commands = self.commands_for(config, request, llama).await;
+        let commands_ms = catalog_started.elapsed().as_millis() as u64;
+        let prompt = build_script_prompt(&state, &commands)?;
+        let script_started = Instant::now();
+        let content = self
+            .answer(llama, prompt, SCRIPT_SCHEMA_NAME, on_delta)
+            .await?;
+        let script = parse_script(&content);
+        tracing::info!(
+            commands = commands.len(),
+            commands_ms,
+            script_ms = script_started.elapsed().as_millis() as u64,
+            wrote_a_script = script.is_some(),
+            history = request.history.len(),
+            thinking = self.config.resolver.thinking,
+            "the fallback wrote a script for a message no intent matched"
+        );
+        script.map(Fallback::Script)
+    }
+
+    /// Ask the fallback model one question and read the content it wrote.
+    ///
+    /// The two steps of the fallback read the same server with the same
+    /// limits and differ in the prompt and the schema alone, so the
+    /// request travels as one value rather than as a row of arguments.
+    /// An answer that does not arrive is a warning, because the turn falls
+    /// back to the plain refusal.
+    async fn answer<F>(
+        &self,
+        llama: &LlamaSettings,
+        prompt: AnswerPrompt,
+        schema_name: &str,
+        on_delta: &mut F,
+    ) -> Option<String>
+    where
+        F: FnMut(&str) + Send,
+    {
+        let result = self
+            .client
+            .read_answer(
+                &AnswerRequest {
+                    base_url: llama.base_url.clone(),
+                    model: llama.model.clone(),
+                    system: prompt.system,
+                    user: prompt.user,
+                    answer_schema: prompt.answer_schema,
+                    schema_name: schema_name.to_string(),
+                    max_tokens: self.config.resolver.max_tokens,
+                    thinking: self.config.resolver.thinking,
+                    timeout: Duration::from_secs(self.config.resolver.timeout_secs),
+                },
+                on_delta,
+            )
+            .await;
+        match result {
+            Ok(content) => Some(content),
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "the fallback model did not answer, the daemon reports no intent"
+                );
+                None
+            }
+        }
+    }
+
+    /// Read the commands the model may use for this message.
+    ///
+    /// The catalog is ranked against the message, so the model reads the
+    /// commands that fit best and not every command of the machine. A
+    /// catalog that does not answer, and a ranking that does not answer,
+    /// leave the model with a list in name order rather than none.
+    async fn commands_for(
+        &self,
+        config: &RouterConfig,
+        request: &ResolveRequest,
+        llama: &LlamaSettings,
+    ) -> Vec<CommandEntry> {
+        if !config.script_fallback {
+            return Vec::new();
+        }
+        let catalog = &self.config.resolver.catalog;
+        if !catalog.enabled || catalog.limit == 0 {
+            return Vec::new();
+        }
+        let read_started = Instant::now();
+        let entries = match self.catalog.read().await {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::warn!(error = %err, "the command catalog did not answer");
+                return Vec::new();
+            }
+        };
+        let read_ms = read_started.elapsed().as_millis() as u64;
+        if entries.is_empty() {
+            return Vec::new();
+        }
+        // A catalog that is not ranked reads in name order, so a machine
+        // without an embedding reader still offers its commands.
+        if !catalog.rank {
+            return entries.iter().take(catalog.limit).cloned().collect();
+        }
+
+        let model = RouteModel {
+            base_url: llama.base_url.clone(),
+            model: llama.model.clone(),
+        };
+        let embedder = self.router.embedder(config, &model);
+        let ranker = CatalogRanker::new(&embedder, catalog.limit);
+        let rank_started = Instant::now();
+        let ranked = ranker.rank(&request.text, entries.as_slice()).await;
+        tracing::info!(
+            entries = entries.len(),
+            read_ms,
+            rank_ms = rank_started.elapsed().as_millis() as u64,
+            "the command catalog was ranked for the script fallback"
+        );
+        match ranked {
+            Ok(ranked) if !ranked.is_empty() => ranked,
+            Ok(_) => Vec::new(),
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "the catalog did not rank, the model reads the commands in name order"
+                );
+                entries.iter().take(catalog.limit).cloned().collect()
+            }
+        }
+    }
+
     /// The model that read one router turn, by the stage that decided it.
     ///
     /// A stage that proves a message from the message alone, and a stage that
     /// reads the scores of the ranking, reads no model at all, so the turn
-    /// names none. A reranking stage reads the built in reranker, and a stage
+    /// names none. A reranking stage reads the built in reranker, a stage
+    /// that asks the built in decision model reads that model, and a stage
     /// that asks a language model reads the server.
     fn read_model_of(
         stage: RouterStage,
         decide: DecideEngine,
         model: &RouteModel,
         rerank_model: &str,
+        laya_model: &str,
     ) -> Option<String> {
         match (stage, decide) {
             (RouterStage::Rerank, DecideEngine::Rerank) => Some(rerank_model.to_string()),
+            (RouterStage::Rerank, DecideEngine::Laya) => Some(laya_model.to_string()),
             (RouterStage::Rerank, DecideEngine::Generative) => Some(model.model.clone()),
             _ => None,
         }
@@ -966,7 +1579,7 @@ impl ResolverService {
         request: &ResolveRequest,
         readers: &Readers<'_>,
         offered: &BTreeMap<String, Vec<String>>,
-        engine: ExtractEngine,
+        config: &RouterConfig,
         on_delta: &mut F,
     ) -> (BTreeMap<String, String>, ResolverEngine)
     where
@@ -976,7 +1589,7 @@ impl ResolverService {
         if intent.entities.is_empty() {
             return (BTreeMap::new(), ResolverEngine::Router);
         }
-        match engine {
+        match config.extract {
             // The lists alone. An open entity is left without a value and
             // the turn asks the user for it.
             ExtractEngine::Lists => (BTreeMap::new(), ResolverEngine::Router),
@@ -1010,11 +1623,136 @@ impl ResolverService {
                     }
                 }
             }
+            ExtractEngine::Laya => {
+                let values = self.read_laya_values(intent, request, offered).await;
+                // An open entity carries no list, so the choice has no
+                // answer to score for it and the matcher has no entry to
+                // match. An intent whose required entities all carry a
+                // list therefore pays no model at all.
+                let unread = find_unread_open_entities(intent, &values);
+                if unread.is_empty() {
+                    return (values, ResolverEngine::Router);
+                }
+                // The open entities are read by the built in span reader
+                // first. It runs on this machine in a few milliseconds,
+                // where the language model spends about two seconds on the
+                // same words, and it is the reader the spans engine uses
+                // for exactly this shape of value. The language model still
+                // reads whatever the span reader finds nothing for, so a
+                // city or a site the span reader misses is never guessed
+                // and the fallback keeps its quality.
+                let spans = match self
+                    .gliner
+                    .read_values(intent, &request.text, &gliner.model, gliner.device, offered)
+                    .await
+                {
+                    Ok(read) => read,
+                    Err(err) => {
+                        tracing::debug!(
+                            error = %err,
+                            "the span reader read no value for the open entities"
+                        );
+                        BTreeMap::new()
+                    }
+                };
+                let mut merged = values;
+                for name in &unread {
+                    if let Some(value) = spans.get(name) {
+                        merged.insert(name.clone(), value.clone());
+                    }
+                }
+                if find_unread_open_entities(intent, &merged).is_empty() {
+                    return (merged, ResolverEngine::Gliner);
+                }
+                // The setting decides whether a value no built in reader
+                // found is read by the language model or left for the turn
+                // to ask the user for. The read costs about two seconds, so
+                // a user may trade the rare missed value for the speed.
+                if !config.open_values_llm {
+                    return (merged, ResolverEngine::Gliner);
+                }
+                let words = self
+                    .read_llama_values(intent, request, llama, offered, on_delta)
+                    .await;
+                if words.is_empty() {
+                    (merged, ResolverEngine::Gliner)
+                } else {
+                    (words, ResolverEngine::Llama)
+                }
+            }
             ExtractEngine::Generative => {
                 let values = self
                     .read_llama_values(intent, request, llama, offered, on_delta)
                     .await;
                 (values, ResolverEngine::Llama)
+            }
+        }
+    }
+
+    /// Read the values of the list entities of one intent with the built in
+    /// decision model.
+    ///
+    /// One `choice` question is asked per entity and the answers are the
+    /// values that entity offers: the values of a closed entity or the live
+    /// list of a script entity. Every question shares one forward pass, so
+    /// the model reads the whole intent at once rather than once per value.
+    ///
+    /// An entity that offers no list names a value the user said rather
+    /// than one of a fixed set, and there is no bounded answer space for
+    /// the model to score. Such an entity stays out of the questions, so a
+    /// required one makes the turn ask the user for it, exactly as the
+    /// lists engine leaves it.
+    async fn read_laya_values(
+        &self,
+        intent: &IntentDto,
+        request: &ResolveRequest,
+        offered: &BTreeMap<String, Vec<String>>,
+    ) -> BTreeMap<String, String> {
+        let asked = laya_questions(intent, offered);
+        if asked.is_empty() {
+            return BTreeMap::new();
+        }
+        let questions: Vec<ChoiceQuestion> = asked
+            .iter()
+            .map(|question| question.question.clone())
+            .collect();
+        let Some(outcomes) = self.ask_laya(intent, &request.text, &questions).await else {
+            return BTreeMap::new();
+        };
+        read_laya_answers(&asked, &outcomes)
+    }
+
+    /// Ask the built in decision model one batch of questions.
+    ///
+    /// The model blocks, so it runs on the blocking pool of the runtime.
+    /// A model that is not on disk, a device that cannot run it, and an
+    /// inference that fails all read as no answer, which leaves the turn
+    /// with the values another reader read.
+    async fn ask_laya(
+        &self,
+        intent: &IntentDto,
+        state: &str,
+        questions: &[ChoiceQuestion],
+    ) -> Option<Vec<ChoiceOutcome>> {
+        let engine = self.laya.clone();
+        let config = self.router_settings().await;
+        let model = config.laya_model.clone();
+        let device = config.local_device;
+        let message = state.to_string();
+        let asked = questions.to_vec();
+        let outcomes = tokio::task::spawn_blocking(move || {
+            engine.answer_choices(&model, device, &message, &asked)
+        })
+        .await;
+        match outcomes {
+            Ok(Ok(outcomes)) => Some(outcomes),
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, intent = %intent.name, "the built in decision model read no value");
+                None
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, intent = %intent.name, "the built in decision model read no value");
+                None
             }
         }
     }
@@ -1079,6 +1817,26 @@ impl ResolverService {
                 .get_gliner_threshold()
                 .await
                 .unwrap_or(config.threshold),
+        }
+    }
+
+    /// Load the built in readers the settings point at, so the first turn
+    /// of the daemon answers as fast as the ones after it.
+    ///
+    /// The load of the quantized graph of GLiNER and the probe that tells
+    /// a provider that cannot run it from a message that names nothing
+    /// both happen here, and the built in models of the router load here
+    /// as well. A model the settings do not read is not loaded.
+    pub async fn warm(&self) {
+        let gliner = self.gliner_settings().await;
+        if let Err(err) = self.gliner.warm(&gliner.model, gliner.device).await {
+            tracing::warn!(error = %err, "the built in span reader did not load at startup");
+        }
+        let config = self.router_settings().await;
+        let router = self.router.clone();
+        let loaded = tokio::task::spawn_blocking(move || router.warm(&config)).await;
+        if let Err(err) = loaded {
+            tracing::warn!(error = %err, "the built in models of the router did not warm at startup");
         }
     }
 
@@ -1188,7 +1946,7 @@ impl ResolverService {
     where
         F: FnMut(&str) + Send,
     {
-        let state = render_state(request);
+        let state = render_message_state(request);
         let base_url = &llama.base_url;
         let model = &llama.model;
         let message = &request.text;
@@ -1204,7 +1962,10 @@ impl ResolverService {
                     model: model.to_string(),
                     system: prompt.system,
                     user: prompt.user,
-                    answer_schema: prompt.answer_schema,
+                    // The values of an intent are a report the daemon reads
+                    // field by field, so the request always carries the
+                    // schema of the entities it asks about.
+                    answer_schema: Some(prompt.answer_schema),
                     schema_name: VALUES_SCHEMA_NAME.to_string(),
                     max_tokens: self.config.resolver.max_tokens,
                     thinking: self.config.resolver.thinking,
@@ -1312,6 +2073,29 @@ fn action_words(intent: &IntentDto) -> Vec<String> {
     words_of(&intent.name)
 }
 
+/// The open entities of one intent that need a value and hold none.
+///
+/// A closed entity offers the values it carries and a script entity offers
+/// the list its script answers with, so the choice has an answer to score
+/// for both and the matcher has entries to match. An open entity has no
+/// list at all: its value is the words the user said, and only the
+/// language model reads words. The extraction stage reads this after the
+/// choice ran, so it knows which turn still needs that reader.
+fn find_unread_open_entities(intent: &IntentDto, values: &BTreeMap<String, String>) -> Vec<String> {
+    intent
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.required
+                && matches!(entity.kind, EntityKindDto::Open)
+                && values
+                    .get(&entity.name)
+                    .is_none_or(|value| value.trim().is_empty())
+        })
+        .map(|entity| entity.name.clone())
+        .collect()
+}
+
 /// The names of the entities of one intent that need a value.
 fn required_entities(intent: &IntentDto) -> Vec<String> {
     intent
@@ -1330,18 +2114,92 @@ fn value_engine_of(engine: ResolverEngine, entities: &[String]) -> Option<Resolv
     (!entities.is_empty()).then_some(engine)
 }
 
+/// One question the built in decision model answers about one entity.
+///
+/// The question and the values it scores stay together, so the answer can
+/// be read back to the entity that asked it after the forward pass.
+struct LayaQuestion {
+    /// The name of the entity the question is about.
+    entity: String,
+    /// The values the entity offers, in the order the model scores them.
+    values: Vec<String>,
+    /// The question itself.
+    question: ChoiceQuestion,
+}
+
+/// Build one question per entity of an intent that offers a list.
+///
+/// A closed entity offers the values it carries and a script entity offers
+/// the live list of its script. An entity that offers no list names a value
+/// the user said rather than one of a fixed set, and there is no bounded
+/// answer space for the model to score, so it stays out of the batch.
+fn laya_questions(
+    intent: &IntentDto,
+    offered: &BTreeMap<String, Vec<String>>,
+) -> Vec<LayaQuestion> {
+    intent
+        .entities
+        .iter()
+        .filter_map(|entity| {
+            let choices = crate::resolver::values::choices_of(entity, offered);
+            if choices.is_empty() {
+                return None;
+            }
+            let options: Vec<(String, String)> = choices
+                .iter()
+                .map(|value| (value.clone(), String::new()))
+                .collect();
+            Some(LayaQuestion {
+                entity: entity.name.clone(),
+                values: choices,
+                question: ChoiceQuestion {
+                    instructions: format!(
+                        "Which value does the message give for the entity `{}`?",
+                        entity.name
+                    ),
+                    options,
+                },
+            })
+        })
+        .collect()
+}
+
+/// Read the chosen value of every question back to its entity.
+///
+/// The outcomes come back one per question, in the order the questions were
+/// asked, so the position of an answer names the entity it belongs to.
+fn read_laya_answers(
+    asked: &[LayaQuestion],
+    outcomes: &[ChoiceOutcome],
+) -> BTreeMap<String, String> {
+    let mut values: BTreeMap<String, String> = BTreeMap::new();
+    for (question, outcome) in asked.iter().zip(outcomes) {
+        let Some(choice) = question.values.get(outcome.index) else {
+            continue;
+        };
+        tracing::debug!(
+            entity = %question.entity,
+            value = %choice,
+            probability = outcome.probability,
+            "the built in decision model read a value"
+        );
+        values.insert(question.entity.clone(), choice.clone());
+    }
+    values
+}
+
 /// Read the model that ran for one value engine, or null when none ran.
 ///
 /// The hybrid reader falls back to the language model when the built in
 /// model cannot read, so the caller passes the model of each engine and
-/// this function names the one that really read the values.
-fn read_model(engine: Option<ResolverEngine>, gliner: &str, llama: &str) -> Option<String> {
+/// this function names the one that really read the values. `inner` is the
+/// model of the reader that runs in the daemon itself: the span reader, or
+/// the choice of the built in decision model when that is what read them.
+fn read_model(engine: Option<ResolverEngine>, inner: &str, llama: &str) -> Option<String> {
     engine.map(|engine| match engine {
-        ResolverEngine::Gliner => gliner.to_string(),
+        ResolverEngine::Gliner => inner.to_string(),
         ResolverEngine::Llama => llama.to_string(),
-        // The engine that reads the lists runs in the daemon itself, so
-        // it reports the model of the reader that would have read them.
-        ResolverEngine::Router => gliner.to_string(),
+        ResolverEngine::Router => inner.to_string(),
     })
 }
 
@@ -1367,7 +2225,7 @@ fn build_decision(request: &ResolveRequest, intents: &[IntentDto]) -> Decision {
     });
 
     Decision {
-        state: render_state(request),
+        state: render_message_state(request),
         question: "Which option does the message ask for?".to_string(),
         options,
     }
@@ -1418,9 +2276,32 @@ fn describe_entities(intent: &IntentDto) -> String {
         .join(", ")
 }
 
-/// Render the state the model reads.
+/// Render the state the model reads, with what the daemon remembers.
+///
+/// The memory belongs to the branch that no intent reaches: the model
+/// reads it when it answers a message the catalog could not match. Every
+/// other reader of the router reads the message alone, so a fact the
+/// memory holds never bends the choice of an intent.
 fn render_state(request: &ResolveRequest) -> String {
-    let mut lines: Vec<String> = Vec::with_capacity(request.history.len() + 1);
+    render_state_of(request, true)
+}
+
+/// Render the state of the message alone.
+///
+/// The decision and the value extraction read this: they answer what the
+/// message asks for, and a memory of the user is not evidence about the
+/// words in front of the model.
+fn render_message_state(request: &ResolveRequest) -> String {
+    render_state_of(request, false)
+}
+
+/// Render the state one model reads.
+fn render_state_of(request: &ResolveRequest, with_memory: bool) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(request.history.len() + 2);
+    if with_memory && !request.memory_seed.trim().is_empty() {
+        lines.push(request.memory_seed.clone());
+        lines.push(String::new());
+    }
     for turn in &request.history {
         lines.push(format!("{}: {}", turn.role.as_str(), turn.text));
     }
@@ -1442,6 +2323,8 @@ fn match_intent(
         engine: ResolverEngine::Llama,
         model: Some(model.to_string()),
         route: RouteReport::default(),
+        reply: None,
+        proposal: None,
     };
     if option_id == NO_INTENT_OPTION {
         return unmatched;
@@ -1503,7 +2386,156 @@ mod tests {
                 role: ChatRoleDto::User,
                 text: "hello".to_string(),
             }],
+            memory_seed: String::new(),
         }
+    }
+
+    /// Build one request that carries a memory for the tests.
+    fn request_with_memory() -> ResolveRequest {
+        let mut found = request();
+        found.memory_seed =
+            "Concepts the daemon already remembers about this user:\n- Ada: lives_in is Zurich"
+                .to_string();
+        found
+    }
+
+    #[test]
+    fn the_memory_reaches_the_state_of_the_turn() {
+        let state = render_state(&request_with_memory());
+        assert!(state.contains("lives_in is Zurich"));
+    }
+
+    #[test]
+    fn the_memory_does_not_reach_the_state_of_the_message_alone() {
+        let state = render_message_state(&request_with_memory());
+        assert!(!state.contains("lives_in is Zurich"));
+        assert!(state.contains("what is the weather in Berlin"));
+    }
+
+    /// Build one entity for the tests.
+    fn entity(name: &str, kind: EntityKindDto, values: Vec<&str>) -> IntentEntityDto {
+        IntentEntityDto {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            kind,
+            values: values.into_iter().map(str::to_string).collect(),
+            script: None,
+            required: true,
+        }
+    }
+
+    #[test]
+    fn a_question_is_asked_for_every_entity_that_offers_a_list() {
+        let intent = intent(
+            "switch workspace",
+            vec![
+                entity("workspace", EntityKindDto::Closed, vec!["one", "two"]),
+                entity("city", EntityKindDto::Open, Vec::new()),
+            ],
+        );
+        let asked = laya_questions(&intent, &BTreeMap::new());
+
+        // The open entity has no bounded answer space, so no question.
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].entity, "workspace");
+        assert_eq!(asked[0].values, vec!["one", "two"]);
+        assert_eq!(asked[0].question.options.len(), 2);
+    }
+
+    #[test]
+    fn the_answer_of_a_question_reads_back_to_its_entity() {
+        let intent = intent(
+            "switch workspace",
+            vec![entity(
+                "workspace",
+                EntityKindDto::Closed,
+                vec!["one", "two"],
+            )],
+        );
+        let asked = laya_questions(&intent, &BTreeMap::new());
+        let outcomes = vec![ChoiceOutcome {
+            index: 1,
+            probability: 0.9,
+            probabilities: vec![0.1, 0.9],
+        }];
+        let values = read_laya_answers(&asked, &outcomes);
+
+        assert_eq!(values.get("workspace"), Some(&"two".to_string()));
+    }
+
+    #[test]
+    fn a_position_outside_the_values_of_a_question_reads_as_no_value() {
+        let intent = intent(
+            "switch workspace",
+            vec![entity("workspace", EntityKindDto::Closed, vec!["one"])],
+        );
+        let asked = laya_questions(&intent, &BTreeMap::new());
+        let outcomes = vec![ChoiceOutcome {
+            index: 7,
+            probability: 1.0,
+            probabilities: vec![1.0],
+        }];
+        assert!(read_laya_answers(&asked, &outcomes).is_empty());
+    }
+
+    #[test]
+    fn a_required_open_entity_without_a_value_asks_for_the_language_model() {
+        let mut intent = script_intent();
+        intent.entities[0].kind = EntityKindDto::Open;
+        intent.entities[0].values.clear();
+        intent.entities[0].script = None;
+        assert_eq!(
+            find_unread_open_entities(&intent, &BTreeMap::new()),
+            vec!["applications"]
+        );
+
+        // A value of spaces is a value no reader really read.
+        let mut values = BTreeMap::new();
+        values.insert("applications".to_string(), "   ".to_string());
+        assert_eq!(
+            find_unread_open_entities(&intent, &values),
+            vec!["applications"]
+        );
+
+        values.insert("applications".to_string(), "github.com".to_string());
+        assert!(find_unread_open_entities(&intent, &values).is_empty());
+    }
+
+    #[test]
+    fn a_list_entity_never_asks_for_the_language_model() {
+        // A script entity offers the list its script answers with and a
+        // closed entity carries its values, so the choice or the matcher
+        // reads them without a language model.
+        let mut intent = script_intent();
+        assert!(find_unread_open_entities(&intent, &BTreeMap::new()).is_empty());
+        intent.entities[0].kind = EntityKindDto::Closed;
+        assert!(find_unread_open_entities(&intent, &BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn an_optional_entity_stays_out_of_the_unread_open_entities() {
+        let mut intent = script_intent();
+        intent.entities[0].kind = EntityKindDto::Open;
+        intent.entities[0].required = false;
+        assert!(find_unread_open_entities(&intent, &BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn the_choice_of_the_fallback_reads_the_message_and_nothing_else() {
+        // The earlier turns and the memory of a conversation bend what the
+        // built in decision model reads a message as needing, so neither
+        // reaches its question. A greeting after a turn that ran a command
+        // is read as a task of the machine otherwise.
+        let request = request_with_memory();
+        assert_eq!(need_state(&request), "what is the weather in Berlin");
+        assert!(!need_state(&request).contains("hello"));
+    }
+
+    #[test]
+    fn the_choice_of_the_fallback_ignores_the_space_around_the_message() {
+        let mut request = request();
+        request.text = "   hello there\n".to_string();
+        assert_eq!(need_state(&request), "hello there");
     }
 
     /// Build one script intent with one entity for the tests.
@@ -1689,6 +2721,8 @@ mod tests {
                 engine: ResolverEngine::Llama,
                 model: Some("qwen3.5-4b".to_string()),
                 route: RouteReport::default(),
+                reply: None,
+                proposal: None,
             }
         );
     }
@@ -1702,6 +2736,8 @@ mod tests {
                 engine: ResolverEngine::Llama,
                 model: Some("qwen3.5-4b".to_string()),
                 route: RouteReport::default(),
+                reply: None,
+                proposal: None,
             }
         );
     }
@@ -1833,6 +2869,26 @@ mod tests {
         assert_eq!(entities[0].source.as_deref(), Some("list"));
         assert_eq!(entities[0].read.as_deref(), Some("firefox browser"));
         assert!(entities[0].engine.is_none());
+    }
+
+    #[test]
+    fn every_extraction_reader_names_the_intent_it_reads() {
+        assert!(
+            extract_note(ExtractEngine::Lists, "get weather").contains("`get weather`"),
+            "the sentence names the intent of the stage"
+        );
+        assert!(
+            extract_note(ExtractEngine::Spans, "get weather").contains("built in model"),
+            "the spans name the model that finds them"
+        );
+        assert!(
+            extract_note(ExtractEngine::Laya, "get weather").contains("built in decision model"),
+            "the decision model names itself"
+        );
+        assert!(
+            extract_note(ExtractEngine::Generative, "get weather").contains("language model"),
+            "the generative reader names the server it asks"
+        );
     }
 
     #[test]

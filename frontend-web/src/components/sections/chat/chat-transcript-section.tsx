@@ -6,12 +6,17 @@
  * turn in view while the reader is at the end, and leaves the place of a
  * reader who scrolled up. A failure shows above the list, so the retry
  * action stays reachable.
+ *
+ * The section owns the preference of how a route reads, because every turn
+ * of the transcript reads its route the same way. The preference is stored
+ * in the browser, so a reader who asks for the debug reading keeps it over
+ * a reload, and the switch of one turn moves every turn with it.
  */
 import type { QRL } from '@builder.io/qwik';
 
 import type { ChatRow } from '~/utils/chat';
 
-import { component$ } from '@builder.io/qwik';
+import { $, component$ } from '@builder.io/qwik';
 
 import { ChatMessagePartial } from '~/components/sections/chat/chat-message-partial';
 import { Alert } from '~/components/ui/alert';
@@ -19,6 +24,8 @@ import { Box } from '~/components/ui/box';
 import { Card } from '~/components/ui/card';
 import { EmptyState } from '~/components/ui/empty-state';
 import { ScrollArea } from '~/components/ui/scroll-area';
+
+import { ROUTE_DEBUG_PREFERENCE, useStoredFlag } from '~/utils/preference';
 
 /** The props of `ChatTranscriptSection`. */
 export interface ChatTranscriptSectionProps {
@@ -34,6 +41,12 @@ export interface ChatTranscriptSectionProps {
 
 export const ChatTranscriptSection = component$<ChatTranscriptSectionProps>(
   (props) => {
+    const debug = useStoredFlag(ROUTE_DEBUG_PREFERENCE, false);
+
+    const handleDebug$ = $((next: boolean) => {
+      debug.value = next;
+    });
+
     return (
       <Card
         label="Transcript"
@@ -70,7 +83,12 @@ export const ChatTranscriptSection = component$<ChatTranscriptSectionProps>(
             />
           ) : (
             props.rows.map((row) => (
-              <ChatMessagePartial key={row.id} row={row} />
+              <ChatMessagePartial
+                key={row.id}
+                row={row}
+                debug={debug.value}
+                onDebug$={handleDebug$}
+              />
             ))
           )}
         </ScrollArea>

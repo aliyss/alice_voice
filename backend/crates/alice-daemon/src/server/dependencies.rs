@@ -178,11 +178,20 @@ pub fn configured_settings(config: &CoreConfig) -> SettingsDto {
         router_embed_source: config.resolver.router.embed_source.as_str().to_string(),
         router_embed_local_model: config.resolver.router.embed_local_model.clone(),
         router_rerank_model: config.resolver.router.rerank_model.clone(),
+        router_laya_model: config.resolver.router.laya_model.clone(),
         router_local_device: config.resolver.router.local_device.as_str().to_string(),
         router_phrase_gate: config.resolver.router.phrase_gate,
         router_list_match: config.resolver.router.list_match.as_str().to_string(),
         router_list_floor: config.resolver.router.list_floor,
+        router_fallback_llm: config.resolver.router.fallback_llm,
+        router_script_fallback: config.resolver.router.script_fallback,
+        router_open_values_llm: config.resolver.router.open_values_llm,
+        response_quality: 50,
+        response_speed: 50,
         preview_sentences: Vec::new(),
+        librarian_enabled: config.librarian.enabled,
+        librarian_base_url: config.librarian.base_url.clone(),
+        librarian_model: config.librarian.model.clone(),
     }
 }
 
@@ -210,11 +219,20 @@ fn to_dto(values: &crate::settings::SettingsValues) -> SettingsDto {
         router_embed_source: values.router.embed_source.as_str().to_string(),
         router_embed_local_model: values.router.embed_local_model.clone(),
         router_rerank_model: values.router.rerank_model.clone(),
+        router_laya_model: values.router.laya_model.clone(),
         router_local_device: values.router.local_device.as_str().to_string(),
         router_phrase_gate: values.router.phrase_gate,
         router_list_match: values.router.list_match.as_str().to_string(),
         router_list_floor: values.router.list_floor,
+        router_fallback_llm: values.router.fallback_llm,
+        router_script_fallback: values.router.script_fallback,
+        router_open_values_llm: values.router.open_values_llm,
+        response_quality: values.response_quality,
+        response_speed: values.response_speed,
         preview_sentences: values.preview_sentences.clone(),
+        librarian_enabled: values.librarian_enabled,
+        librarian_base_url: values.librarian_base_url.clone(),
+        librarian_model: values.librarian_model.clone(),
     }
 }
 
@@ -254,11 +272,20 @@ mod tests {
             router_embed_source: router.embed_source.as_str().to_string(),
             router_embed_local_model: router.embed_local_model.clone(),
             router_rerank_model: router.rerank_model.clone(),
+            router_laya_model: router.laya_model.clone(),
             router_local_device: router.local_device.as_str().to_string(),
             router_phrase_gate: router.phrase_gate,
             router_list_match: router.list_match.as_str().to_string(),
             router_list_floor: router.list_floor,
+            router_fallback_llm: router.fallback_llm,
+            router_script_fallback: router.script_fallback,
+            router_open_values_llm: router.open_values_llm,
+            response_quality: 50,
+            response_speed: 50,
             preview_sentences: Vec::new(),
+            librarian_enabled: true,
+            librarian_base_url: "http://127.0.0.1:8012/v1".to_string(),
+            librarian_model: "qwen3.5-4b".to_string(),
         }
     }
 

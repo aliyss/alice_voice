@@ -48,7 +48,10 @@ fn readable_entities(intent: &IntentDto) -> Vec<&IntentEntityDto> {
 /// A closed entity carries them and a short list of a script entity is
 /// offered the same way. A longer list is not a choice but a span: the
 /// model reads the words and the daemon reads the entry they name.
-fn choices_of(entity: &IntentEntityDto, offered: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+pub(crate) fn choices_of(
+    entity: &IntentEntityDto,
+    offered: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
     match entity.kind {
         EntityKindDto::Closed => entity.values.clone(),
         _ => offered_for(entity, offered).to_vec(),
@@ -103,7 +106,10 @@ fn describe_entity(entity: &IntentEntityDto, offered: &BTreeMap<String, Vec<Stri
             entity.name
         );
     }
-    format!("- {} (open): the words of the state", entity.name)
+    format!(
+        "- {} (open): the name the state gives for it, such as `Berlin`, and nothing when the state names none",
+        entity.name
+    )
 }
 
 /// Build the prompt that reads the values of the entities of one intent.
@@ -119,9 +125,12 @@ pub fn build_values_prompt(
         return None;
     }
 
+    // The command stays out of the prompt. Its template carries the very
+    // words a value could be, so a model that runs out of ideas answers a
+    // token of the command rather than a word of the message: the city of
+    // `curl wttr.in/{city}` was read as `wttr.in` from a message that
+    // named no city at all. The entities below already say what to read.
     let mut lines = vec!["State:".to_string(), state.to_string(), String::new()];
-    lines.push(format!("Command: {}", intent.command));
-    lines.push(String::new());
     lines.push("Entities:".to_string());
     for entity in readable_entities(intent) {
         lines.push(describe_entity(entity, offered));

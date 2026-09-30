@@ -84,11 +84,38 @@ pub async fn get_conversation_handler(
             database_failed(err, context, "The daemon could not read the conversation.")
         })?;
     fill_intent_names(&state, &mut messages).await;
+    fill_memory(&state, &mut messages).await;
 
     Ok(Json(ConversationDetailDto {
         conversation,
         messages,
     }))
+}
+
+/// Mark what the memory learned from each turn of the page.
+///
+/// The memory reads a turn after the daemon answered it, so the mark is
+/// read from the store of the memory and not from the stored turn: a turn
+/// the memory has not read yet, or one that taught nothing new, carries
+/// none. One read answers for the whole page, because a conversation shows
+/// many turns at once.
+async fn fill_memory(state: &AppState, messages: &mut [ChatMessageDto]) {
+    let ids: Vec<Uuid> = messages.iter().map(|message| message.id).collect();
+    if ids.is_empty() {
+        return;
+    }
+
+    let learned = match state.stores.librarian.memory_of_messages(&ids).await {
+        Ok(learned) => learned,
+        Err(err) => {
+            tracing::warn!(error = %err, "memory read failed");
+            return;
+        }
+    };
+
+    for message in messages.iter_mut() {
+        message.memory = learned.get(&message.id).cloned();
+    }
 }
 
 /// Fill the name of the intent of every message that carries one.

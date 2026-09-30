@@ -39,12 +39,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use alice_core::config::{CoreConfig, DecideEngine, EmbedSource, RouterConfig, RouterStage};
+use alice_core::config::{
+    CoreConfig, DecideEngine, EmbedSource, ExtractEngine, RouterConfig, RouterStage,
+};
 
 use crate::resolver::client::{DecisionRequest, LlamaClient};
 use crate::resolver::decision::{Decision, DecisionOption};
 use crate::resolver::error::ResolveError;
-use crate::resolver::local::LocalEngine;
+use crate::resolver::local::{LayaEngine, LocalEngine};
 use crate::resolver::prompt::build_prompt;
 use crate::resolver::router::doc::IntentDoc;
 use crate::resolver::router::embed::{as_score, cosine, EmbedCache, Embedder};
@@ -82,6 +84,9 @@ const READER_RERANKER: &str = "reranker";
 
 /// The reader that decides with the language model.
 const READER_MODEL: &str = "model";
+
+/// The reader that decides with the built in decision model.
+const READER_LAYA: &str = "laya";
 
 /// The path of a score that came from the vectors of the catalog.
 const EVIDENCE_VECTOR: &str = "embedding";
@@ -234,6 +239,8 @@ pub struct Router {
     client: LlamaClient,
     /// The engine that runs a built in model.
     local: LocalEngine,
+    /// The engine that runs the built in decision model.
+    laya: LayaEngine,
     /// The configuration of the daemon.
     config: Arc<CoreConfig>,
     /// The vectors the daemon already read.
@@ -242,12 +249,46 @@ pub struct Router {
 
 impl Router {
     /// Create a new router.
-    pub fn new(client: LlamaClient, local: LocalEngine, config: Arc<CoreConfig>) -> Self {
+    pub fn new(
+        client: LlamaClient,
+        local: LocalEngine,
+        laya: LayaEngine,
+        config: Arc<CoreConfig>,
+    ) -> Self {
         Self {
             client,
             local,
+            laya,
             config,
             cache: Arc::new(EmbedCache::new()),
+        }
+    }
+
+    /// Load the built in models the settings really read, so the first turn
+    /// of the daemon answers as fast as the ones after it.
+    ///
+    /// Only the models the stages read are loaded: a router that decides
+    /// with the server and retrieves by the words loads nothing. A model
+    /// that is not on disk is left to the turn that asks for it, so a
+    /// missing file is reported where it is used rather than at startup.
+    /// This blocks on the models, so the caller runs it off the runtime.
+    pub fn warm(&self, config: &RouterConfig) {
+        if config.embed_source == EmbedSource::Local
+            && (config.retrieve.uses_embeddings() || config.list_match.uses_embeddings())
+        {
+            if let Err(err) = self
+                .local
+                .warm(&config.embed_local_model, config.local_device)
+            {
+                tracing::warn!(error = %err, "the built in embedding model did not load at startup");
+            }
+        }
+        if matches!(config.decide, DecideEngine::Laya)
+            || matches!(config.extract, ExtractEngine::Laya)
+        {
+            if let Err(err) = self.laya.warm(&config.laya_model, config.local_device) {
+                tracing::warn!(error = %err, "the built in decision model did not load at startup");
+            }
         }
     }
 
@@ -294,17 +335,28 @@ impl Router {
     /// The caller passes the trace of the turn, and every stage writes
     /// what it read into it, so the metadata of a stored message names the
     /// whole route rather than the stage that happened to answer.
+    ///
+    /// The caller also passes the sink of the running turn. Every stage
+    /// names itself there as it starts, so a surface shows the step the
+    /// daemon is on while the turn runs rather than one label that stands
+    /// still for the whole read. The stage a reader is on is read before
+    /// the reader is asked, so a slow reader is named while it works.
     pub async fn route<F>(
         &self,
         input: &RouteInput<'_>,
         trace: &mut RouteTrace,
         on_delta: &mut F,
+        on_stage: &mut (dyn FnMut(&str, &str) + Send),
     ) -> Result<Route, ResolveError>
     where
         F: FnMut(&str) + Send,
     {
         // 1. The deterministic pass.
         if input.config.fast_path {
+            on_stage(
+                STEP_FAST_PATH,
+                "proving the message against the catalog, with no model",
+            );
             let started = Instant::now();
             if let FastOutcome::Match(found) =
                 fastpath::read(input.docs, input.text, input.lists, input.config)
@@ -362,6 +414,10 @@ impl Router {
         }
 
         // 2. The retrieval pass.
+        on_stage(
+            STEP_RETRIEVE,
+            "ranking every intent of the catalog against the message",
+        );
         let started = Instant::now();
         let (scored, no_vectors) = self.retrieve(input).await;
         if scored.is_empty() {
@@ -390,6 +446,7 @@ impl Router {
         ));
 
         // 3. The decision pass.
+        on_stage(STEP_DECIDE, &decide_note(input.config.decide, short.len()));
         let started = Instant::now();
         match input.config.decide {
             DecideEngine::Generative => match self.ask_model(input, &short, on_delta).await {
@@ -483,6 +540,44 @@ impl Router {
                     Ok(route)
                 }
             },
+            DecideEngine::Laya => match self.decide_laya(input, &short).await {
+                Ok(route) => {
+                    trace.record(decision_step(
+                        &route,
+                        READER_LAYA,
+                        Some(input.config.laya_model.clone()),
+                        choice_note(&route, input.docs),
+                        false,
+                        started.elapsed(),
+                    ));
+                    Ok(route)
+                }
+                Err(err) => {
+                    // The built in decision model needs a file on disk and a
+                    // forward pass. Neither has to cost the turn its intent,
+                    // so the scores of the ranking decide instead.
+                    tracing::warn!(
+                        error = %err,
+                        model = %input.config.laya_model,
+                        "the built in decision model did not answer, the scores of the ranking decide"
+                    );
+                    let route = decide_by_score(&short, input.config);
+                    trace.record(decision_step(
+                        &route,
+                        READER_SCORES,
+                        None,
+                        fallback_note(
+                            "the built in decision model did not answer",
+                            &err.to_string(),
+                            &route,
+                            input.docs,
+                        ),
+                        true,
+                        started.elapsed(),
+                    ));
+                    Ok(route)
+                }
+            },
             DecideEngine::Score => {
                 let route = decide_by_score(&short, input.config);
                 trace.record(decision_step(
@@ -496,6 +591,101 @@ impl Router {
                 Ok(route)
             }
         }
+    }
+
+    /// Choose one of the short list with the built in decision model.
+    ///
+    /// The model reads the message and the short list as one `choice`
+    /// question and answers with one option and a probability for every
+    /// option. The floor and the margin of the ranking hold first, so a
+    /// message the catalog does not answer costs no forward pass, and the
+    /// option that states that none of the short list fits lets the model
+    /// refuse as well as choose.
+    async fn decide_laya(
+        &self,
+        input: &RouteInput<'_>,
+        short: &[Candidate],
+    ) -> Result<Route, ResolveError> {
+        if let Route::Refused {
+            candidates, reason, ..
+        } = decide_by_score(short, input.config)
+        {
+            return Ok(Route::Refused {
+                stage: RouterStage::Rerank,
+                candidates,
+                reason,
+            });
+        }
+
+        // The model reads only the candidates the ranking found credible.
+        // A candidate under the floor is not an answer the ranking
+        // supports, and the names of a short list a dozen deep are what
+        // make the model answer that none of them fits at all. The floor
+        // already passed for the best candidate, so the list is never
+        // empty. The full ranking stays the report of the stage.
+        let credible: Vec<Candidate> = short
+            .iter()
+            .filter(|candidate| candidate.score >= input.config.floor)
+            .cloned()
+            .collect();
+        // The option of a candidate is its name alone. The built in model
+        // scores a short answer against the message: a name is a few
+        // tokens and every option of the list fits the head whole, while
+        // a name followed by every example of the intent fills the head
+        // and is cut in the middle of a word, which is not the shape the
+        // model was measured on. The examples still reach the generative
+        // reader, which reads a sentence rather than a number.
+        let mut options: Vec<(String, String)> = credible
+            .iter()
+            .map(|candidate| (input.docs[candidate.index].name.clone(), String::new()))
+            .collect();
+        // The model may answer that no option fits, which is what keeps a
+        // weak catalog from running a command. The option reads as a plain
+        // sentence and not as a machine name, which is the shape the
+        // reference of the built in model was measured on.
+        // The refusal option is the same shape as the others: a name with
+        // no detail. A lone option that carries a sentence beside its
+        // name is longer than every candidate, and the model reads the
+        // length as meaning and answers it.
+        options.push(("none of these".to_string(), String::new()));
+
+        let engine = self.laya.clone();
+        let model = input.config.laya_model.clone();
+        let device = input.config.local_device;
+        let state = input.text.to_string();
+        let instructions = "Which option does the message ask for?".to_string();
+        let outcome = tokio::task::spawn_blocking(move || {
+            engine.decide(&model, device, &state, &instructions, &options)
+        })
+        .await
+        .map_err(|err| ResolveError::Embeddings {
+            reason: err.to_string(),
+        })?
+        .map_err(|err| ResolveError::Embeddings {
+            reason: err.to_string(),
+        })?;
+
+        if outcome.index >= credible.len() {
+            return Ok(Route::Refused {
+                stage: RouterStage::Rerank,
+                candidates: short.to_vec(),
+                reason: "the decision model chose no intent of the short list".to_string(),
+            });
+        }
+        let found = &credible[outcome.index];
+        tracing::debug!(
+            intent = %input.docs[found.index].name,
+            score = outcome.probability,
+            "the built in decision model chose an intent"
+        );
+        Ok(Route::Chosen {
+            index: found.index,
+            stage: RouterStage::Rerank,
+            confidence: Some(outcome.probability),
+            candidates: short.to_vec(),
+            reason: None,
+            values: BTreeMap::new(),
+        })
     }
 
     /// Choose one of the short list with the built in reranker.
@@ -758,6 +948,29 @@ impl Router {
     }
 }
 
+/// One sentence about the reader the decision stage is running.
+///
+/// The stage names itself before its reader is asked, so the sentence
+/// says what is about to happen rather than what happened. The reader
+/// comes from the settings, so a turn on a slow model says so while it
+/// waits instead of leaving one label on the screen.
+fn decide_note(engine: DecideEngine, short: usize) -> String {
+    match engine {
+        DecideEngine::Score => {
+            format!("choosing among {short} intents by the scores of the ranking")
+        }
+        DecideEngine::Rerank => {
+            format!("choosing among {short} intents with the built in reranker")
+        }
+        DecideEngine::Laya => {
+            format!("choosing among {short} intents with the built in decision model")
+        }
+        DecideEngine::Generative => {
+            format!("asking the language model to choose among {short} intents")
+        }
+    }
+}
+
 /// Record the stage that ranked the catalog.
 ///
 /// The stage ran by definition of reaching this function, and the reader
@@ -956,6 +1169,30 @@ mod tests {
             intent("get weather", &[], &[("city", EntityKindDto::Open)]),
             intent("close window", &["close firefox"], &[]),
         ])
+    }
+
+    #[test]
+    fn every_decision_reader_names_itself_and_the_short_list() {
+        assert_eq!(
+            decide_note(DecideEngine::Score, 3),
+            "choosing among 3 intents by the scores of the ranking"
+        );
+        assert!(
+            decide_note(DecideEngine::Rerank, 8).contains("built in reranker"),
+            "the reranker names the model it runs"
+        );
+        assert!(
+            decide_note(DecideEngine::Laya, 8).contains("built in decision model"),
+            "the decision model names itself"
+        );
+        assert!(
+            decide_note(DecideEngine::Generative, 8).contains("language model"),
+            "the generative reader names the server it asks"
+        );
+        assert!(
+            decide_note(DecideEngine::Laya, 11).contains("11 intents"),
+            "the sentence counts the short list the stage decides from"
+        );
     }
 
     #[test]

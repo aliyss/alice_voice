@@ -62,6 +62,8 @@ impl GlinerResolver {
             engine: ResolverEngine::Gliner,
             model: Some(model.to_string()),
             route: crate::resolver::service::RouteReport::default(),
+            reply: None,
+            proposal: None,
         };
         let labels = scoring::labels_for(intents);
         let hits = self.hits(labels, text, model, device).await?;
@@ -121,6 +123,25 @@ impl GlinerResolver {
             .hits(scoring::read_labels(intent, offered), text, model, device)
             .await?;
         Ok(scoring::read_values(intent, &hits, text, offered))
+    }
+
+    /// Load the configured model and read one text, so the first turn of
+    /// the daemon does not pay for the load.
+    ///
+    /// The load of a quantized graph takes about a second, and whether an
+    /// accelerated provider can run the graph at all is told apart from a
+    /// message that names nothing only by one read. Both happen here, in
+    /// the background of the startup, rather than in front of the first
+    /// user turn.
+    pub async fn warm(&self, model: &str, device: LocalDevice) -> Result<(), GlinerError> {
+        self.hits(
+            vec!["person".to_string()],
+            "Alice is a person.",
+            model,
+            device,
+        )
+        .await
+        .map(|_| ())
     }
 
     /// Run one inference on the blocking pool of the runtime.

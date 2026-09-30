@@ -17,12 +17,12 @@ use gliner::model::params::Parameters;
 use gliner::model::pipeline::span::SpanMode;
 use gliner::model::GLiNER;
 use orp::params::RuntimeParameters;
-use ort::execution_providers::CUDAExecutionProvider;
 use ort::execution_providers::ExecutionProviderDispatch;
+use ort::execution_providers::{CUDAExecutionProvider, OpenVINOExecutionProvider};
 
 pub use crate::resolver::device::DEVICE_CPU;
 
-use crate::resolver::device::{self, DEVICE_CUDA};
+use crate::resolver::device::{self, DEVICE_CUDA, DEVICE_GPU};
 use crate::resolver::gliner::catalog::ModelSpec;
 use crate::resolver::gliner::error::GlinerError;
 use crate::resolver::gliner::store::GlinerStore;
@@ -71,7 +71,10 @@ pub fn active_device(preference: LocalDevice) -> Result<&'static str, GlinerErro
 struct Loaded {
     /// Identifier of the model.
     model: String,
-    /// The device the session runs on.
+    /// The device the caller asked for. A later read asks for the same
+    /// one, so the session is kept even when it runs somewhere else.
+    requested: &'static str,
+    /// The device the session really runs on.
     device: &'static str,
     /// The session that answers every message.
     session: GLiNER<SpanMode>,
@@ -81,6 +84,7 @@ impl fmt::Debug for Loaded {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Loaded")
             .field("model", &self.model)
+            .field("requested", &self.requested)
             .field("device", &self.device)
             .finish_non_exhaustive()
     }
@@ -120,16 +124,16 @@ impl GlinerEngine {
         text: &str,
         labels: &[String],
     ) -> Result<Vec<LabelHit>, GlinerError> {
-        let device = active_device(device)?;
+        let requested = active_device(device)?;
         if labels.is_empty() {
             return Ok(Vec::new());
         }
         let mut loaded = self.lock();
         let current = loaded
             .as_ref()
-            .is_some_and(|loaded| loaded.model == spec.id && loaded.device == device);
+            .is_some_and(|loaded| loaded.model == spec.id && loaded.requested == requested);
         if !current {
-            *loaded = Some(self.load(spec, device)?);
+            *loaded = Some(self.load_working(spec, requested)?);
         }
         let loaded = loaded
             .as_ref()
@@ -137,11 +141,47 @@ impl GlinerEngine {
         run(&loaded.session, text, labels)
     }
 
+    /// Load one model onto the device the caller asked for, and read it on
+    /// the processor when that device cannot answer.
+    ///
+    /// An accelerated provider can load this quantized graph and answer
+    /// every message with no span at all, which reads exactly like a
+    /// message that names nothing: the value reader finds nothing, the
+    /// resolver falls back to the language model, and a read of a few
+    /// milliseconds becomes seconds. One tiny read of a text the model
+    /// must answer tells the two apart once per load, and the processor
+    /// takes over only when the accelerated provider really answers
+    /// nothing.
+    fn load_working(
+        &self,
+        spec: &'static ModelSpec,
+        requested: &'static str,
+    ) -> Result<Loaded, GlinerError> {
+        let loaded = self.load(spec, requested, requested)?;
+        if requested == DEVICE_CPU || answers(&loaded.session) {
+            return Ok(loaded);
+        }
+        tracing::warn!(
+            model = spec.id,
+            device = requested,
+            "the accelerated provider answered no span, the processor reads the model"
+        );
+        self.load(spec, requested, DEVICE_CPU)
+    }
+
     /// Load one model onto one device.
-    fn load(&self, spec: &'static ModelSpec, device: &'static str) -> Result<Loaded, GlinerError> {
+    fn load(
+        &self,
+        spec: &'static ModelSpec,
+        requested: &'static str,
+        device: &'static str,
+    ) -> Result<Loaded, GlinerError> {
         let runtime = match device {
             DEVICE_CUDA => {
                 RuntimeParameters::new(self.threads, [CUDAExecutionProvider::default().build()])
+            }
+            DEVICE_GPU => {
+                RuntimeParameters::new(self.threads, [OpenVINOExecutionProvider::default().build()])
             }
             _ => RuntimeParameters::new(self.threads, Vec::<ExecutionProviderDispatch>::new()),
         };
@@ -162,6 +202,7 @@ impl GlinerEngine {
         );
         Ok(Loaded {
             model: spec.id.to_string(),
+            requested,
             device,
             session,
         })
@@ -181,6 +222,15 @@ fn file_with_suffix(
     suffix: &str,
 ) -> Option<&'static crate::resolver::gliner::catalog::ModelFile> {
     spec.files.iter().find(|file| file.path.ends_with(suffix))
+}
+
+/// Whether one loaded session answers a span it must.
+///
+/// A working model reads a person and a city out of one plain sentence, so
+/// a session that finds neither is a provider that cannot run the graph.
+fn answers(session: &GLiNER<SpanMode>) -> bool {
+    let labels = vec!["person".to_string(), "city".to_string()];
+    run(session, "Alice lives in Basel.", &labels).is_ok_and(|hits| !hits.is_empty())
 }
 
 /// Run one inference on a loaded session.
@@ -226,8 +276,15 @@ mod tests {
 
     #[test]
     fn a_cuda_request_reports_why_it_cannot_work() {
-        if device::cuda_available() {
+        if device::cuda_build() && device::cuda_available() {
             assert_eq!(active_device(LocalDevice::Cuda).ok(), Some(DEVICE_CUDA));
+            return;
+        }
+        if device::gpu_build() && device::openvino_available() {
+            assert_eq!(
+                active_device(LocalDevice::Cuda).ok(),
+                Some(device::DEVICE_GPU)
+            );
             return;
         }
         let err = active_device(LocalDevice::Cuda).expect_err("this machine has no CUDA device");
@@ -235,6 +292,24 @@ mod tests {
         assert!(message.contains("cuda"), "{message}");
         assert!(
             message.contains("--features gliner-cuda") || message.contains("no CUDA device"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_gpu_request_reports_why_it_cannot_work() {
+        if (device::gpu_build() && device::openvino_available())
+            || (device::cuda_build() && device::cuda_available())
+        {
+            let device = active_device(LocalDevice::Gpu).expect("gpu available");
+            assert!(device == DEVICE_GPU || device == DEVICE_CUDA);
+            return;
+        }
+        let err = active_device(LocalDevice::Gpu).expect_err("this machine has no GPU device");
+        let message = err.to_string().to_lowercase();
+        assert!(message.contains("gpu"), "{message}");
+        assert!(
+            message.contains("--features gpu") || message.contains("no gpu device"),
             "{message}"
         );
     }

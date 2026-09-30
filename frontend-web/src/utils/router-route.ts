@@ -52,12 +52,26 @@ const CHAIN_LINKS: string[] = [
 export interface RoutePlaces {
   /** The block that ranks the catalog by its vectors, or null. */
   vectors: string | null;
-  /** The block that ran the decision with a built in model, or null. */
-  reranker: string | null;
+  /**
+   * The block of the built in models, or null.
+   *
+   * The reranker, the decision model, and the choice reader of the
+   * extraction stage all run a file in the daemon, so all three light the
+   * same block rather than one block per model.
+   */
+  builtin: string | null;
   /** The block that ran a language model, or null. */
   model: string | null;
   /** The block that found the spans of the values, or null. */
   spans: string | null;
+  /**
+   * The block that reads the memory of the user into the answer, or null.
+   *
+   * The memory belongs to the branch that no intent reaches, and it is
+   * read only when that branch answers, so a daemon that keeps no memory
+   * or answers no refusal lights nothing here.
+   */
+  memory: string | null;
 }
 
 /**
@@ -206,6 +220,14 @@ export function routeHighlight(
     // one exit for that: a message that meets no intent leaves the chain.
     draft.nodes.add('refused');
     draft.tones.refused = 'error';
+    // The branch that no intent reaches reads the memory before the model
+    // answers it, so the block stands with the exit and the link out of
+    // the exit is walked with it.
+    if (places.memory) {
+      draft.nodes.add(places.memory);
+      draft.tones[places.memory] = 'ok';
+      draft.edges.push('refused-memory');
+    }
     // The link out of the chain belongs to the graph, so it is walked only
     // when the turn really reached the stage that link leaves.
     tail = draft.nodes.has(EXIT_LINKS.refused.from)
@@ -249,12 +271,19 @@ function placeOf(
       : places.vectors;
   }
   if (step.stage === 'decide') {
-    if (step.reader === 'reranker') {
-      return places.reranker;
+    // The built in reranker and the built in decision model are the same
+    // block: both read the short list in the daemon and need no server.
+    if (step.reader === 'reranker' || step.reader === 'laya') {
+      return places.builtin;
     }
     return step.reader === 'model' ? places.model : null;
   }
   if (step.stage === 'extract') {
+    // The choice reader of the extraction stage is the decision model
+    // again, so it stands in the same block as the decision stage.
+    if (step.reader === 'choice') {
+      return places.builtin;
+    }
     if (step.reader === 'spans') {
       return places.spans;
     }

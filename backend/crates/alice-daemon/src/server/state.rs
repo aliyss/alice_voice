@@ -13,6 +13,8 @@ use crate::event_bus::EventBus;
 use crate::execution::CommandRunner;
 use crate::handling::HandlingDeps;
 use crate::intent::{EntityScripts, IntentService};
+use crate::librarian::LibrarianService;
+use crate::pending_script::PendingScriptService;
 use crate::queue::QueueService;
 use crate::resolver::gliner::GlinerStore;
 use crate::resolver::local::LocalStore;
@@ -29,6 +31,8 @@ pub struct AppStores {
     pub conversations: ConversationService,
     /// Queue service that stores the messages which wait for handling.
     pub queue: QueueService,
+    /// Store of the scripts that wait for the approval of the user.
+    pub pending_scripts: PendingScriptService,
     /// Settings service that stores the values of the settings page.
     pub settings: SettingsService,
     /// Intent service that stores the intent configuration.
@@ -43,6 +47,8 @@ pub struct AppStores {
     pub local_store: Arc<LocalStore>,
     /// Runner that runs the command of an intent.
     pub runner: CommandRunner,
+    /// Service that reads and writes the long term memory.
+    pub librarian: LibrarianService,
 }
 
 /// Shared state of the API server.
@@ -76,6 +82,7 @@ impl AppState {
             runner: self.stores.runner.clone(),
             events: self.events.clone(),
             config: Arc::clone(&self.config),
+            librarian: self.stores.librarian.clone(),
         }
     }
 }

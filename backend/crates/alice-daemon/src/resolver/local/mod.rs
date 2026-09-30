@@ -13,8 +13,10 @@
 pub mod catalog;
 pub mod encoder;
 pub mod error;
+pub mod laya;
 pub mod store;
 
 pub use encoder::LocalEngine;
 pub use error::LocalError;
+pub use laya::LayaEngine;
 pub use store::LocalStore;

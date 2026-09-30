@@ -2,20 +2,30 @@
  * `SettingsPage` is the settings surface of the daemon.
  *
  * The surface holds a section for the queue, one for the intent resolver,
- * and one for the intent configuration. A bar of sections stays beside the
- * content, so a reader moves between them without scrolling through the
- * ones they do not need.
+ * one for the memory of the daemon, and one for the intent configuration.
+ * A bar of sections stays beside the content, so a reader moves between
+ * them without scrolling through the ones they do not need.
  *
  * The page receives every action as a callback prop, so the route file
  * defines the handles that wrap the `server$` functions.
  */
 import type { QRL } from '@builder.io/qwik';
 
+import type { LintOutcome } from '~/components/sections/settings/librarian-section';
+import type {
+  MemoryConceptOutcome,
+  MemoryDeleteOutcome,
+  MemorySearchOutcome,
+} from '~/components/sections/settings/memory-search-section';
+
 import type { ApiResult } from '~/types/bridge';
 import type {
   DependenciesDto,
   IntentDto,
   IntentListDto,
+  LibrarianStatusDto,
+  MemoryNodeDto,
+  MemoryWriteRequestDto,
   ResolverStatusDto,
   SettingsDto,
 } from '~/types/dto';
@@ -30,6 +40,7 @@ import { $, component$, useSignal } from '@builder.io/qwik';
 
 import { IntentFormSection } from '~/components/sections/settings/intent-form-section';
 import { IntentListSection } from '~/components/sections/settings/intent-list-section';
+import { LibrarianSection } from '~/components/sections/settings/librarian-section';
 import { QueueToggleSection } from '~/components/sections/settings/queue-toggle-section';
 import { ResolverSettingsSection } from '~/components/sections/settings/resolver-settings-section';
 import { Alert } from '~/components/ui/alert';
@@ -42,7 +53,7 @@ import { Stack } from '~/components/ui/stack';
 import { Text } from '~/components/ui/text';
 
 /** The sections of the surface, in the order the bar shows them. */
-const SECTIONS = ['resolver', 'queue', 'intents'] as const;
+const SECTIONS = ['resolver', 'queue', 'librarian', 'intents'] as const;
 
 /** One section of the settings surface. */
 type SettingsSection = (typeof SECTIONS)[number];
@@ -56,6 +67,10 @@ const SECTION_TEXT: Record<SettingsSection, { title: string; note: string }> = {
   queue: {
     title: 'Queue',
     note: 'Whether the daemon stores every turn in the database.',
+  },
+  librarian: {
+    title: 'Librarian',
+    note: 'The long term memory of the daemon: the concepts it holds, the facts of each one, and the linter that sweeps them. The reader of the memory is set in the flow of the intent resolver.',
   },
   intents: {
     title: 'Intents',
@@ -91,12 +106,39 @@ export interface SettingsPageProps {
    */
   dependencies: DependenciesDto | null;
   /**
+   * The state of the librarian, or null when the daemon did not answer.
+   */
+  librarianStatus: LibrarianStatusDto | null;
+  /**
+   * The concepts the memory holds, newest first, or empty when the daemon
+   * did not answer.
+   */
+  memories: MemoryNodeDto[];
+  /**
    * Update the settings. The route file defines the handle and passes it
    * as this callback prop.
    */
   onUpdateSettings$: QRL<
     (input: SettingsInput) => Promise<ApiResult<SettingsDto>>
   >;
+  /** Search the long term memory. */
+  onSearchMemory$: QRL<(text: string) => Promise<MemorySearchOutcome>>;
+  /** Save one concept of the long term memory. */
+  onSaveConcept$: QRL<
+    (input: MemoryWriteRequestDto) => Promise<MemoryConceptOutcome>
+  >;
+  /** Retire one fact of a concept and return its concept. */
+  onRetireFact$: QRL<(factId: string) => Promise<MemoryConceptOutcome>>;
+  /** Move one concept into another. */
+  onMergeConcept$: QRL<
+    (id: string, into: string) => Promise<MemoryConceptOutcome>
+  >;
+  /** Delete one concept and every fact of it. */
+  onDeleteConcept$: QRL<(id: string) => Promise<MemoryDeleteOutcome>>;
+  /** Read the report of the memory linter. */
+  onLintMemory$: QRL<() => Promise<LintOutcome>>;
+  /** Read the state of the librarian again. */
+  onReadLibrarianStatus$: QRL<() => Promise<ApiResult<LibrarianStatusDto>>>;
   /** Create one intent. */
   onCreateIntent$: QRL<
     (input: IntentInput) => Promise<ApiResult<IntentListDto>>
@@ -150,6 +192,13 @@ export type SettingsPageData = Omit<
   | 'onRemoveModel$'
   | 'onDownloadLocalModel$'
   | 'onRemoveLocalModel$'
+  | 'onSearchMemory$'
+  | 'onSaveConcept$'
+  | 'onRetireFact$'
+  | 'onMergeConcept$'
+  | 'onDeleteConcept$'
+  | 'onLintMemory$'
+  | 'onReadLibrarianStatus$'
 >;
 
 export const SettingsPage = component$<SettingsPageProps>((props) => {
@@ -159,6 +208,7 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
   const settings = useSignal(props.settings);
   const intents = useSignal(props.intents);
   const status = useSignal(props.status);
+  const librarianStatus = useSignal(props.librarianStatus);
   const dependencies = useSignal(props.dependencies);
   const installing = useSignal(false);
   const editingId = useSignal<string | null>(null);
@@ -213,10 +263,12 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
     // The state of the resolver depends on the settings: the selected
     // model, the device, and the label budget all move with them. The
     // dependencies move too, because the address or the server may have
-    // changed.
-    const [fresh, places] = await Promise.all([
+    // changed. The memory is set from the flow with the same save, so its
+    // state is read again with them.
+    const [fresh, places, memories] = await Promise.all([
       props.onReadResolverStatus$(),
       props.onReadDependencies$(),
+      props.onReadLibrarianStatus$(),
     ]);
     pending.value = false;
     if (!fresh.failed) {
@@ -224,6 +276,9 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
     }
     if (!places.failed) {
       dependencies.value = places.data;
+    }
+    if (!memories.failed) {
+      librarianStatus.value = memories.data;
     }
   });
 
@@ -307,6 +362,58 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
     resolverSaved.value = false;
   });
 
+  const handleSearchMemory = $((text: string) => props.onSearchMemory$(text));
+
+  const handleLintMemory = $(() => props.onLintMemory$());
+
+  const handleReadLibrarian = $(async () => {
+    const result = await props.onReadLibrarianStatus$();
+    if (!result.failed) {
+      librarianStatus.value = result.data;
+    }
+  });
+
+  /**
+   * Change one concept of the memory.
+   *
+   * A write, a retire, and a delete all move the store, so the count the
+   * bar carries is read again after each change. The read runs behind the
+   * change, so the panel answers as soon as the store did.
+   */
+  const handleSaveConcept = $(async (input: MemoryWriteRequestDto) => {
+    const outcome = await props.onSaveConcept$(input);
+    if (!outcome.failed) {
+      void handleReadLibrarian();
+    }
+    return outcome;
+  });
+
+  const handleRetireFact = $(async (factId: string) => {
+    const outcome = await props.onRetireFact$(factId);
+    if (!outcome.failed) {
+      void handleReadLibrarian();
+    }
+    return outcome;
+  });
+
+  const handleMergeConcept = $(async (id: string, into: string) => {
+    const outcome = await props.onMergeConcept$(id, into);
+    if (!outcome.failed) {
+      // A merge moves one concept into another, so both the count and the
+      // list of the memory are worth reading again.
+      void handleReadLibrarian();
+    }
+    return outcome;
+  });
+
+  const handleDeleteConcept = $(async (id: string) => {
+    const outcome = await props.onDeleteConcept$(id);
+    if (!outcome.failed) {
+      void handleReadLibrarian();
+    }
+    return outcome;
+  });
+
   const handleEdit = $((id: string | null) => {
     editingId.value = id;
     formOpen.value = true;
@@ -382,6 +489,13 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
         : { label: 'Off', tone: 'warn' as const },
     },
     {
+      id: 'librarian',
+      label: 'Librarian',
+      status: librarianStatus.value?.enabled
+        ? { label: `${librarianStatus.value.nodes}`, tone: 'ok' as const }
+        : { label: 'Off', tone: 'warn' as const },
+    },
+    {
       id: 'intents',
       label: 'Intents',
       status: { label: `${intents.value.length}` },
@@ -402,7 +516,7 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
       <Box class="w-full px-8 pt-6">
         <PageHeader
           title="Settings"
-          description="Control the daemon queue, the intent resolver, and the intents."
+          description="Control the daemon queue, the intent resolver, the memory, and the intents."
         />
       </Box>
 
@@ -454,6 +568,7 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
               <ResolverSettingsSection
                 settings={settings.value}
                 status={status.value}
+                librarianStatus={librarianStatus.value}
                 dependencies={dependencies.value}
                 pending={pending.value}
                 installing={installing.value}
@@ -479,6 +594,23 @@ export const SettingsPage = component$<SettingsPageProps>((props) => {
                 blocked={!canStore}
                 blockedReason={storeReason}
                 onToggle$={handleToggle}
+              />
+            ) : null}
+
+            {section.value === 'librarian' ? (
+              <LibrarianSection
+                concepts={props.memories}
+                status={librarianStatus.value}
+                pending={pending.value}
+                blocked={!canStore}
+                blockedReason={storeReason}
+                onSearch$={handleSearchMemory}
+                onSaveConcept$={handleSaveConcept}
+                onRetireFact$={handleRetireFact}
+                onMergeConcept$={handleMergeConcept}
+                onDeleteConcept$={handleDeleteConcept}
+                onLint$={handleLintMemory}
+                onRefresh$={handleReadLibrarian}
               />
             ) : null}
 

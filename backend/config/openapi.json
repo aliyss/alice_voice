@@ -371,6 +371,271 @@
         }
       }
     },
+    "/api/v1/librarian": {
+      "get": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `GET /api/v1/librarian`.",
+        "operationId": "get_librarian_handler",
+        "responses": {
+          "200": {
+            "description": "State of the librarian",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibrarianStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/facts/{id}": {
+      "delete": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `DELETE /api/v1/librarian/facts/{id}`.",
+        "description": "The fact is retired rather than deleted: it keeps its place in the\nhistory and stops being true now. The reply carries the concept it\nbelongs to, so the editor reads the new state without a second call.",
+        "operationId": "retire_fact_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifier of the fact",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The concept the fact belongs to",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryNodeDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The fact does not exist"
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/lint": {
+      "get": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `GET /api/v1/librarian/lint`.",
+        "operationId": "lint_librarian_handler",
+        "responses": {
+          "200": {
+            "description": "The memory linter report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibrarianLintDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/memories": {
+      "get": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `GET /api/v1/librarian/memories`.",
+        "operationId": "list_memories_handler",
+        "parameters": [
+          {
+            "name": "text",
+            "in": "query",
+            "description": "Words to search the memory for",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Largest number of nodes to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Memory nodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryQueryDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `POST /api/v1/librarian/memories`.",
+        "operationId": "write_memory_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryWriteRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The stored node",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryNodeDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/memories/{id}": {
+      "delete": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `DELETE /api/v1/librarian/memories/{id}`.",
+        "description": "The whole concept goes, facts included. A reader who wants to keep the\nhistory retires the one fact instead.",
+        "operationId": "delete_memory_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifier of the concept",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The concept is deleted"
+          },
+          "404": {
+            "description": "The concept does not exist"
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/memories/{id}/merge": {
+      "post": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `POST /api/v1/librarian/memories/{id}/merge`.",
+        "description": "The concept in the path moves into the concept the body names, so a\nreader settles the two concepts the memory holds for one thing without\ndeleting either of them by hand. The reply is the concept that\nabsorbed the other, so the editor reads its new state without a second\ncall.",
+        "operationId": "merge_memory_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifier of the concept that moves",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryMergeRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The concept that absorbed the other",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryNodeDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The merge names one concept twice"
+          },
+          "404": {
+            "description": "One of the concepts does not exist"
+          }
+        }
+      }
+    },
+    "/api/v1/librarian/query": {
+      "post": {
+        "tags": [
+          "librarian"
+        ],
+        "summary": "Reply of `POST /api/v1/librarian/query`.",
+        "operationId": "query_memory_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryQueryRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Memory nodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryQueryDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/resolver": {
       "get": {
         "tags": [
@@ -578,6 +843,116 @@
         }
       }
     },
+    "/api/v1/scripts/{id}": {
+      "get": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Reply of `GET /api/v1/scripts/{id}`.",
+        "operationId": "get_script_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Script id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored script",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Script not found"
+          }
+        }
+      }
+    },
+    "/api/v1/scripts/{id}/approve": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Reply of `POST /api/v1/scripts/{id}/approve`.",
+        "description": "The daemon claims the pending script and, when the claim belongs to\nthis call, runs it. A second approval of the same script reports the\nstored script and runs nothing.",
+        "operationId": "approve_script_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Script id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored script after the run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Script not found"
+          }
+        }
+      }
+    },
+    "/api/v1/scripts/{id}/deny": {
+      "post": {
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Reply of `POST /api/v1/scripts/{id}/deny`.",
+        "description": "A denied script stays in the store with its decision, so the surface\nstill reads it and the daemon never runs it.",
+        "operationId": "deny_script_handler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Script id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored script after the decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Script not found"
+          }
+        }
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "tags": [
@@ -649,6 +1024,61 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/system": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reply of `GET /api/v1/system`.",
+        "operationId": "get_system_handler",
+        "responses": {
+          "200": {
+            "description": "System profile of the host",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemProfileDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/preset": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reply of `POST /api/v1/system/preset`.",
+        "operationId": "post_system_preset_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemPresetRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Router preset for the quality",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemPresetDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
           }
         }
       }
@@ -727,6 +1157,17 @@
             ],
             "description": "Name of the resolved intent, or null when none."
           },
+          "memory": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageMemoryDto",
+                "description": "\nWhat the turn taught the long term memory, or null when the memory\nlearned nothing from it. The memory reads a turn after the daemon\nanswered it, so the field is filled when a reader reads the message\nback rather than when the turn is stored."
+              }
+            ]
+          },
           "meta": {
             "oneOf": [
               {
@@ -789,6 +1230,13 @@
           "text"
         ],
         "properties": {
+          "context": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the daemon reads the earlier turns of the conversation as\nthe context of this message. Null reads them.\n\nA message sent with this false is read on its own, so the router\nholds it against the catalog alone and a model answers without the\nturns before it. A follow-up whose meaning depends on the turn\nbefore it needs the context, so the default reads it."
+          },
           "conversationId": {
             "type": [
               "string",
@@ -1385,6 +1833,115 @@
           }
         }
       },
+      "LibrarianLintDto": {
+        "type": "object",
+        "description": "The report of the memory linter.",
+        "required": [
+          "duplicates",
+          "orphans",
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryFactDto"
+            },
+            "description": "Relations a newer relation replaced. They stay readable."
+          },
+          "duplicates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryNodeDto"
+            },
+            "description": "Nodes two keys name, so the memory holds one thing twice. Every\nnode of such a pair is reported, because either may take the other."
+          },
+          "orphans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryNodeDto"
+            },
+            "description": "Nodes that no relation reaches, so nothing links to them."
+          }
+        }
+      },
+      "LibrarianStatusDto": {
+        "type": "object",
+        "description": "The state of the librarian as the settings page sees it.\n\nThe librarian is a store beside the conversation store, so the page\nreports what the store holds and whether the model that writes it\nanswers. A model that is down leaves the seeding of a turn alone: the\nstore still answers, it just stops learning.",
+        "required": [
+          "enabled",
+          "baseUrl",
+          "model",
+          "reachable",
+          "nodes",
+          "edges",
+          "currentEdges",
+          "confirmedEdges",
+          "pendingEpisodes",
+          "ingestedEpisodes"
+        ],
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "description": "The address of the model server the librarian reads."
+          },
+          "confirmedEdges": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of stored edges a later turn taught again.",
+            "minimum": 0
+          },
+          "currentEdges": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of stored edges that are true now.",
+            "minimum": 0
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the server does not answer, or null."
+          },
+          "edges": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of stored memory edges, closed edges included.",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the daemon keeps a memory at all."
+          },
+          "ingestedEpisodes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of episodes the worker read.",
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "description": "The model the librarian reads."
+          },
+          "nodes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of stored memory nodes.",
+            "minimum": 0
+          },
+          "pendingEpisodes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of stored episodes the worker has not read yet.",
+            "minimum": 0
+          },
+          "reachable": {
+            "type": "boolean",
+            "description": "Whether the model server answers."
+          }
+        }
+      },
       "LlamaDependencyDto": {
         "type": "object",
         "description": "The llama.cpp server as the settings page sees it.",
@@ -1518,7 +2075,7 @@
           },
           "role": {
             "type": "string",
-            "description": "What the model reads: `embeddings` or `reranker`."
+            "description": "What the model reads: `embeddings`, `reranker`, or `decision`."
           },
           "sizeBytes": {
             "type": "integer",
@@ -1557,6 +2114,246 @@
           "modelsDir": {
             "type": "string",
             "description": "Directory that holds the downloaded models."
+          }
+        }
+      },
+      "MemoryFactDto": {
+        "type": "object",
+        "description": "One dated relation of one memory node.",
+        "required": [
+          "id",
+          "relation",
+          "value",
+          "current",
+          "confidence",
+          "importance",
+          "confirmations",
+          "lastConfirmedAt",
+          "validAt"
+        ],
+        "properties": {
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "How sure the reader was of the fact, from zero to one."
+          },
+          "confirmations": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of later turns that taught the same fact again."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether the fact is true now."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identifier of the fact."
+          },
+          "importance": {
+            "type": "number",
+            "format": "float",
+            "description": "How much the fact is worth, from zero to one."
+          },
+          "invalidAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Time the fact stopped being true, or null while it is current."
+          },
+          "lastConfirmedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the memory last saw the fact, in ISO 8601."
+          },
+          "relation": {
+            "type": "string",
+            "description": "The relation the fact names, for example `lives_in`."
+          },
+          "validAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the fact became true, in ISO 8601."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value the fact carries."
+          }
+        }
+      },
+      "MemoryFactWriteDto": {
+        "type": "object",
+        "description": "One relation a write gives to a node.",
+        "required": [
+          "relation",
+          "value"
+        ],
+        "properties": {
+          "relation": {
+            "type": "string",
+            "description": "The relation the fact names."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value the fact carries."
+          }
+        }
+      },
+      "MemoryMergeRequestDto": {
+        "type": "object",
+        "description": "Body of a memory merge.\n\nThe concept the request names keeps its key and its facts, and the\nconcept in the path moves into it: its facts move as they stand, its\nkey becomes a name of the target, and the empty concept goes.",
+        "required": [
+          "into"
+        ],
+        "properties": {
+          "into": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Identifier of the concept that absorbs the other."
+          }
+        }
+      },
+      "MemoryNodeDto": {
+        "type": "object",
+        "description": "One memory node with its facts.",
+        "required": [
+          "id",
+          "key",
+          "title",
+          "body",
+          "facts",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The body of the concept in plain text."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon stored the node, in ISO 8601."
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryFactDto"
+            },
+            "description": "The relations of the node, current first."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identifier of the node."
+          },
+          "key": {
+            "type": "string",
+            "description": "The key that names the node, for example `user`."
+          },
+          "title": {
+            "type": "string",
+            "description": "The name the memory shows."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon last changed the node, in ISO 8601."
+          }
+        }
+      },
+      "MemoryQueryDto": {
+        "type": "object",
+        "description": "Reply of a memory query.",
+        "required": [
+          "nodes"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryNodeDto"
+            },
+            "description": "The nodes the query matched, best first."
+          }
+        }
+      },
+      "MemoryQueryRequestDto": {
+        "type": "object",
+        "description": "Body of the memory query.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest number of nodes to return.",
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "description": "The words to search the memory for. Empty returns the recent nodes."
+          }
+        }
+      },
+      "MemorySavedFactDto": {
+        "type": "object",
+        "description": "One fact that one turn taught the long term memory.",
+        "required": [
+          "concept",
+          "relation",
+          "value"
+        ],
+        "properties": {
+          "concept": {
+            "type": "string",
+            "description": "The name of the concept the fact belongs to."
+          },
+          "relation": {
+            "type": "string",
+            "description": "The relation the fact names."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value the fact carries."
+          }
+        }
+      },
+      "MemoryWriteRequestDto": {
+        "type": "object",
+        "description": "Body of a memory write.",
+        "required": [
+          "key",
+          "title",
+          "body",
+          "facts"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The body of the concept."
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryFactWriteDto"
+            },
+            "description": "The relations to write. A relation with a new value closes the\nolder value rather than deleting it."
+          },
+          "key": {
+            "type": "string",
+            "description": "The key that names the node. An existing key is enriched."
+          },
+          "title": {
+            "type": "string",
+            "description": "The name the memory shows."
           }
         }
       },
@@ -1638,6 +2435,22 @@
           }
         }
       },
+      "MessageMemoryDto": {
+        "type": "object",
+        "description": "What one turn taught the long term memory.\n\nThe memory learns from the turns that met no intent, and it writes them\nin the background. This is what a reader sees of that work: the facts\nthe turn taught, each with the concept it belongs to.",
+        "required": [
+          "facts"
+        ],
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemorySavedFactDto"
+            },
+            "description": "The facts the turn taught, in the order the memory wrote them."
+          }
+        }
+      },
       "MessageMetaDto": {
         "type": "object",
         "description": "How the daemon read one handled turn.\n\nThe resolver owns two steps: it chooses the intent, and it reads the\nvalues of the entities of that intent. Either step may run on the\nllama.cpp server or on the built in GLiNER model, so a turn reports\nthe engine of each step. The rest of the metadata is what the daemon\nthen ran, so the transcript can explain a stored turn.",
@@ -1694,6 +2507,22 @@
             ],
             "description": "The model that engine ran, or null when the daemon cannot name it."
           },
+          "memorySeed": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The concepts the daemon read from the long term memory for this\nturn, as plain text, or null when the memory carried none.\n\nThe memory belongs to the branch that no intent matches, so only a\nturn without an intent reports what the daemon read of it: the\nfacts the answer of the turn leaned on."
+          },
+          "resolveMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long the daemon needed to read the turn, in milliseconds, or\nnull when it did not measure the read.\n\nThe read runs from the queued message to the command, so a slow\nturn is told apart from a slow command: the duration above is the\ncommand alone and this is the resolver.",
+            "minimum": 0
+          },
           "route": {
             "oneOf": [
               {
@@ -1704,6 +2533,13 @@
                 "description": "How the layered router read the turn, stage by stage, or null when\nthe backend of the turn is not the router.\n\nThe stage above names the stage that decided, and this names every\nstage the turn passed with the reader it ran and the short list it\nread, so a stored turn can be read back the way the daemon read it."
               }
             ]
+          },
+          "scriptId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The identifier of the script the model wrote for this turn, or\nnull when the model answered in words.\n\nThe store keeps the script, so a user can still decide about a\nturn that a restart or a closed socket left behind."
           },
           "stage": {
             "type": [
@@ -1916,6 +2752,43 @@
           }
         }
       },
+      "RouterPresetDto": {
+        "type": "object",
+        "description": "One preset that maps a quality value to a router configuration.",
+        "required": [
+          "quality",
+          "speed",
+          "label",
+          "description",
+          "router"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "One sentence about the preset."
+          },
+          "label": {
+            "type": "string",
+            "description": "Short label of the preset, for example `Balanced`."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quality between 0 and 100. 0 is fastest, 100 is best.",
+            "minimum": 0
+          },
+          "router": {
+            "$ref": "#/components/schemas/RouterStatusDto",
+            "description": "Router configuration of the preset."
+          },
+          "speed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Speed between 0 and 100. Always 100 - quality.",
+            "minimum": 0
+          }
+        }
+      },
       "RouterStatusDto": {
         "type": "object",
         "description": "The state of the layered router.\n\nThe router has a stage per setting, and each stage names the reader it\nwould use right now. The settings page shows that state, so a stage\nthat cannot run its reader says so before a turn depends on it.",
@@ -1933,6 +2806,7 @@
           "embedSource",
           "embedLocalModel",
           "rerankModel",
+          "layaModel",
           "localDevice",
           "activeLocalDevice",
           "local",
@@ -1991,6 +2865,10 @@
             "format": "float",
             "description": "Smallest score the decision pass accepts."
           },
+          "layaModel": {
+            "type": "string",
+            "description": "Identifier of the built in decision model."
+          },
           "lexicalWeight": {
             "type": "number",
             "format": "float",
@@ -2034,6 +2912,61 @@
             "type": "integer",
             "description": "Size of the short list the retrieval pass keeps.",
             "minimum": 0
+          }
+        }
+      },
+      "ScriptDto": {
+        "type": "object",
+        "description": "One shell script that waits for the decision of the user.",
+        "required": [
+          "id",
+          "requestText",
+          "summary",
+          "script",
+          "destructiveness",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Conversation the turn belongs to, or null when the queue is off."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time the daemon stored the script, in ISO 8601."
+          },
+          "destructiveness": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How rough the script is on the machine, between 0 and 100.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identifier of the script."
+          },
+          "requestText": {
+            "type": "string",
+            "description": "The message the model wrote the script for."
+          },
+          "script": {
+            "type": "string",
+            "description": "The shell script."
+          },
+          "status": {
+            "type": "string",
+            "description": "The decision of the user: pending, approved, denied, or ran."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One sentence about what the script does."
           }
         }
       },
@@ -2113,11 +3046,20 @@
           "routerEmbedSource",
           "routerEmbedLocalModel",
           "routerRerankModel",
+          "routerLayaModel",
           "routerLocalDevice",
           "routerPhraseGate",
           "routerListMatch",
           "routerListFloor",
-          "previewSentences"
+          "routerFallbackLlm",
+          "routerScriptFallback",
+          "routerOpenValuesLlm",
+          "responseQuality",
+          "responseSpeed",
+          "previewSentences",
+          "librarianEnabled",
+          "librarianBaseUrl",
+          "librarianModel"
         ],
         "properties": {
           "glinerDevice": {
@@ -2132,6 +3074,18 @@
             "type": "number",
             "format": "float",
             "description": "Smallest probability a GLiNER label needs to count."
+          },
+          "librarianBaseUrl": {
+            "type": "string",
+            "description": "Base URL of the model server the librarian reads."
+          },
+          "librarianEnabled": {
+            "type": "boolean",
+            "description": "Whether the librarian keeps a long term memory."
+          },
+          "librarianModel": {
+            "type": "string",
+            "description": "Model name the librarian server answers to."
           },
           "previewSentences": {
             "type": "array",
@@ -2155,6 +3109,18 @@
           "resolverModel": {
             "type": "string",
             "description": "Model name the intent resolver asks the server for."
+          },
+          "responseQuality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Response quality between 0 and 100. 0 is fastest, 100 is best.\nSpeed is 100 - quality. The value lerps between the minimum\nsuccessful settings and the maximum quality settings.",
+            "minimum": 0
+          },
+          "responseSpeed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Response speed between 0 and 100. Always 100 - quality.",
+            "minimum": 0
           },
           "routerDecide": {
             "type": "string",
@@ -2181,6 +3147,10 @@
             "type": "string",
             "description": "How the values of the entities of the chosen intent are read."
           },
+          "routerFallbackLlm": {
+            "type": "boolean",
+            "description": "Whether the language model answers a message no intent matched."
+          },
           "routerFastPath": {
             "type": "boolean",
             "description": "Whether the deterministic pass of the router reads the message first."
@@ -2189,6 +3159,10 @@
             "type": "number",
             "format": "float",
             "description": "Smallest score the decision pass accepts."
+          },
+          "routerLayaModel": {
+            "type": "string",
+            "description": "Identifier of the built in decision model."
           },
           "routerLexicalWeight": {
             "type": "number",
@@ -2217,6 +3191,10 @@
             "type": "string",
             "description": "Directory that holds the downloaded models of the router."
           },
+          "routerOpenValuesLlm": {
+            "type": "boolean",
+            "description": "Whether the language model reads an open value the built in reader\nfound none of."
+          },
           "routerPhraseGate": {
             "type": "boolean",
             "description": "Whether a phrase counts only when the message shares its action."
@@ -2228,6 +3206,10 @@
           "routerRetrieve": {
             "type": "string",
             "description": "The evidence the retrieval pass ranks the catalog with."
+          },
+          "routerScriptFallback": {
+            "type": "boolean",
+            "description": "Whether the language model may write a shell script for a message\nno intent matched. The daemon runs no script without approval."
           },
           "routerTopK": {
             "type": "integer",
@@ -2261,6 +3243,27 @@
             ],
             "format": "float",
             "description": "Smallest probability a GLiNER label needs to count."
+          },
+          "librarianBaseUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base URL of the model server the librarian reads."
+          },
+          "librarianEnabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the librarian keeps a long term memory."
+          },
+          "librarianModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model name the librarian server answers to."
           },
           "previewSentences": {
             "type": [
@@ -2300,6 +3303,24 @@
             ],
             "description": "Model name the intent resolver asks the server for."
           },
+          "responseQuality": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Response quality between 0 and 100. 0 is fastest, 100 is best.",
+            "minimum": 0
+          },
+          "responseSpeed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Response speed between 0 and 100. Always 100 - quality.",
+            "minimum": 0
+          },
           "routerDecide": {
             "type": [
               "string",
@@ -2343,6 +3364,13 @@
             ],
             "description": "How the values of the entities of the chosen intent are read."
           },
+          "routerFallbackLlm": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the language model answers a message no intent matched."
+          },
           "routerFastPath": {
             "type": [
               "boolean",
@@ -2357,6 +3385,13 @@
             ],
             "format": "float",
             "description": "Smallest score the decision pass accepts."
+          },
+          "routerLayaModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identifier of the built in decision model."
           },
           "routerLexicalWeight": {
             "type": [
@@ -2403,6 +3438,13 @@
             ],
             "description": "Directory that holds the downloaded models of the router."
           },
+          "routerOpenValuesLlm": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the language model reads an open value the built in reader\nfound none of."
+          },
           "routerPhraseGate": {
             "type": [
               "boolean",
@@ -2423,6 +3465,13 @@
               "null"
             ],
             "description": "The evidence the retrieval pass ranks the catalog with."
+          },
+          "routerScriptFallback": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the language model may write a shell script for a message\nno intent matched. The daemon runs no script without approval."
           },
           "routerTopK": {
             "type": [
@@ -2467,6 +3516,193 @@
           "WakeDetected",
           "Error"
         ]
+      },
+      "SystemCpuCoreDto": {
+        "type": "object",
+        "description": "One logical processor of the host.",
+        "required": [
+          "name",
+          "brand",
+          "vendor",
+          "frequencyMhz",
+          "usagePercent"
+        ],
+        "properties": {
+          "brand": {
+            "type": "string",
+            "description": "Brand of the core, for example `Intel(R) Core(TM) i7`."
+          },
+          "frequencyMhz": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Frequency of the core in MHz.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the core, for example `cpu0`."
+          },
+          "usagePercent": {
+            "type": "number",
+            "format": "float",
+            "description": "Usage of the core in percent between 0 and 100."
+          },
+          "vendor": {
+            "type": "string",
+            "description": "Vendor of the core."
+          }
+        }
+      },
+      "SystemCpuDto": {
+        "type": "object",
+        "description": "Processor summary of the host.",
+        "required": [
+          "brand",
+          "vendor",
+          "logicalCores",
+          "frequencyMhz",
+          "usagePercent",
+          "cores"
+        ],
+        "properties": {
+          "brand": {
+            "type": "string",
+            "description": "Brand of the processor."
+          },
+          "cores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemCpuCoreDto"
+            },
+            "description": "Every logical core."
+          },
+          "frequencyMhz": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Frequency of the processor in MHz.",
+            "minimum": 0
+          },
+          "logicalCores": {
+            "type": "integer",
+            "description": "Number of logical cores.",
+            "minimum": 0
+          },
+          "physicalCores": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Number of physical cores, or null when the host does not report it.",
+            "minimum": 0
+          },
+          "usagePercent": {
+            "type": "number",
+            "format": "float",
+            "description": "Average usage of the processor in percent between 0 and 100."
+          },
+          "vendor": {
+            "type": "string",
+            "description": "Vendor identifier."
+          }
+        }
+      },
+      "SystemDevicesDto": {
+        "type": "object",
+        "description": "Devices the daemon can use for built in models.",
+        "required": [
+          "cudaBuild",
+          "cudaAvailable",
+          "availableDevices",
+          "activeDevice",
+          "activeLocalDevice",
+          "glinerModelsInstalled",
+          "routerModelsInstalled",
+          "gpus"
+        ],
+        "properties": {
+          "activeDevice": {
+            "type": "string",
+            "description": "The device the selected GLiNER model would run on now."
+          },
+          "activeLocalDevice": {
+            "type": "string",
+            "description": "The device the router models would run on now."
+          },
+          "availableDevices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Devices this build and this machine offer, best first."
+          },
+          "cudaAvailable": {
+            "type": "boolean",
+            "description": "Whether ONNX Runtime can use a CUDA device right now."
+          },
+          "cudaBuild": {
+            "type": "boolean",
+            "description": "Whether this build carries CUDA support."
+          },
+          "glinerModelsInstalled": {
+            "type": "integer",
+            "description": "Number of GLiNER models on disk.",
+            "minimum": 0
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemGpuDto"
+            },
+            "description": "The graphics devices the daemon can reach, best first.\n\nA graphics device is what makes a built in model fast, so the page\nnames every device with the memory it holds. A machine without a\ngraphics device reports an empty list."
+          },
+          "routerModelsInstalled": {
+            "type": "integer",
+            "description": "Number of router models on disk.",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemDiskDto": {
+        "type": "object",
+        "description": "One disk of the host.",
+        "required": [
+          "name",
+          "mountPoint",
+          "fileSystem",
+          "totalBytes",
+          "availableBytes",
+          "isRemovable"
+        ],
+        "properties": {
+          "availableBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Available space of the disk in bytes.",
+            "minimum": 0
+          },
+          "fileSystem": {
+            "type": "string",
+            "description": "File system of the disk, for example `ext4`."
+          },
+          "isRemovable": {
+            "type": "boolean",
+            "description": "Whether the disk is removable."
+          },
+          "mountPoint": {
+            "type": "string",
+            "description": "Mount point of the disk."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name of the disk, for example `/dev/sda1`."
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total space of the disk in bytes.",
+            "minimum": 0
+          }
+        }
       },
       "SystemEventDto": {
         "type": "object",
@@ -2613,6 +3849,31 @@
                 "type": "string",
                 "enum": [
                   "IntentThinking"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The stage of the resolver that runs right now.\n\nThe resolver reports each stage as it starts, so a surface shows\nthe work of a turn step by step instead of one label that never\nchanges. A stage that reads a model says so in its own event, so\nthis event names the step and not the reader behind it.",
+            "required": [
+              "stage",
+              "detail",
+              "type"
+            ],
+            "properties": {
+              "detail": {
+                "type": "string",
+                "description": "One sentence about what the stage is doing, in the present tense."
+              },
+              "stage": {
+                "type": "string",
+                "description": "The stage: `fast_path`, `retrieve`, `decide`, `extract`, or\n`answer` for the model that answers a message no intent matched."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "IntentStage"
                 ]
               }
             }
@@ -2846,9 +4107,446 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The model wrote a shell script for a message no intent matched.\n\nThe daemon runs no script of its own accord, so the event carries\nthe script and its rating for the user to approve or deny.",
+            "required": [
+              "id",
+              "summary",
+              "script",
+              "destructiveness",
+              "type"
+            ],
+            "properties": {
+              "destructiveness": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "script": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ScriptProposed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The user approved one script, so the daemon may run it.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ScriptApproved"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The user denied one script, so the daemon runs it never.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ScriptDenied"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The memory learned facts from one stored turn.\n\nThe memory reads a turn after the daemon answered it, so this event\nreaches the surface later than the reply it belongs to. It names the\nmessage of the turn, so the transcript marks the message the memory\nlearned from rather than the turn that happens to be on screen.",
+            "required": [
+              "message_id",
+              "facts",
+              "type"
+            ],
+            "properties": {
+              "facts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MemorySavedFactDto"
+                }
+              },
+              "message_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "MemorySaved"
+                ]
+              }
+            }
           }
         ],
         "description": "Payload of a `SystemEventDto`."
+      },
+      "SystemGpuDto": {
+        "type": "object",
+        "description": "One graphics device of the host.\n\nThe settings page reads how much memory a device holds, because the\nmemory decides which built in model fits on it. A machine that does not\nreport a value reports null rather than a value of zero.",
+        "required": [
+          "name",
+          "vendor",
+          "sharedMemory"
+        ],
+        "properties": {
+          "driverVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version of the driver, or null when the machine does not name\none."
+          },
+          "memoryFreeBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The memory free in bytes, or null.",
+            "minimum": 0
+          },
+          "memoryTotalBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The memory of the device in bytes, or null when the device holds\nnone of its own or the machine does not report it.",
+            "minimum": 0
+          },
+          "memoryUsedBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The memory in use in bytes, or null.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the device, as the machine reports it."
+          },
+          "sharedMemory": {
+            "type": "boolean",
+            "description": "True when the device has no memory of its own and draws on the\nmemory of the system.\n\nAn integrated device shares the memory of the machine, so the page\nreads the memory of the host for it rather than a number of zero."
+          },
+          "vendor": {
+            "type": "string",
+            "description": "The maker of the device: `nvidia`, `amd`, or `intel`."
+          }
+        }
+      },
+      "SystemMemoryDto": {
+        "type": "object",
+        "description": "Memory summary of the host.",
+        "required": [
+          "totalBytes",
+          "availableBytes",
+          "usedBytes",
+          "totalSwapBytes",
+          "usedSwapBytes"
+        ],
+        "properties": {
+          "availableBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Available RAM in bytes.",
+            "minimum": 0
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total RAM in bytes.",
+            "minimum": 0
+          },
+          "totalSwapBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total swap in bytes.",
+            "minimum": 0
+          },
+          "usedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used RAM in bytes.",
+            "minimum": 0
+          },
+          "usedSwapBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used swap in bytes.",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemOsDto": {
+        "type": "object",
+        "description": "Operating system of the host.",
+        "required": [
+          "arch"
+        ],
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "Processor architecture, for example `x86_64`."
+          },
+          "hostname": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Host name."
+          },
+          "kernelVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Kernel version."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the operating system, for example `Ubuntu`."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version of the operating system."
+          }
+        }
+      },
+      "SystemPresetDto": {
+        "type": "object",
+        "description": "Reply of `POST /api/v1/system/preset`.",
+        "required": [
+          "quality",
+          "speed",
+          "router"
+        ],
+        "properties": {
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quality between 0 and 100.",
+            "minimum": 0
+          },
+          "router": {
+            "$ref": "#/components/schemas/RouterStatusDto",
+            "description": "Router configuration of the preset."
+          },
+          "speed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Speed between 0 and 100. Always 100 - quality.",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemPresetRequestDto": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/system/preset`.",
+        "required": [
+          "quality"
+        ],
+        "properties": {
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quality between 0 and 100. 0 is fastest, 100 is best.",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemProfileDto": {
+        "type": "object",
+        "description": "Full system profile of the host.",
+        "required": [
+          "os",
+          "cpu",
+          "memory",
+          "disks",
+          "devices",
+          "resolver",
+          "recommendation",
+          "presets"
+        ],
+        "properties": {
+          "cpu": {
+            "$ref": "#/components/schemas/SystemCpuDto",
+            "description": "Processor."
+          },
+          "devices": {
+            "$ref": "#/components/schemas/SystemDevicesDto",
+            "description": "Devices the daemon can use."
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SystemDiskDto"
+            },
+            "description": "Disks."
+          },
+          "memory": {
+            "$ref": "#/components/schemas/SystemMemoryDto",
+            "description": "Memory."
+          },
+          "os": {
+            "$ref": "#/components/schemas/SystemOsDto",
+            "description": "Operating system."
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouterPresetDto"
+            },
+            "description": "Every preset from fastest to best, with the recommended one marked."
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/SystemRecommendationDto",
+            "description": "Recommended preset for this host."
+          },
+          "resolver": {
+            "$ref": "#/components/schemas/SystemResolverDto",
+            "description": "Resolver state."
+          }
+        }
+      },
+      "SystemRecommendationDto": {
+        "type": "object",
+        "description": "Recommendation for this host.",
+        "required": [
+          "quality",
+          "speed",
+          "reason",
+          "factors",
+          "router"
+        ],
+        "properties": {
+          "factors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Factors that shaped the recommendation."
+          },
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Recommended quality between 0 and 100.",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this recommendation fits the host."
+          },
+          "router": {
+            "$ref": "#/components/schemas/RouterStatusDto",
+            "description": "Router configuration of the recommended preset."
+          },
+          "speed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Recommended speed between 0 and 100. Always 100 - quality.",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemResolverDto": {
+        "type": "object",
+        "description": "Resolver state of the host.",
+        "required": [
+          "llamaReachable",
+          "embeddingsReachable",
+          "glinerInstalled",
+          "localEmbeddingInstalled",
+          "localRerankerInstalled",
+          "intentCount",
+          "labelCount"
+        ],
+        "properties": {
+          "embeddingsDetail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the embedding server does not answer, or null."
+          },
+          "embeddingsReachable": {
+            "type": "boolean",
+            "description": "Whether the embedding server answers."
+          },
+          "glinerInstalled": {
+            "type": "boolean",
+            "description": "Whether the selected GLiNER model is on disk."
+          },
+          "intentCount": {
+            "type": "integer",
+            "description": "Number of configured intents.",
+            "minimum": 0
+          },
+          "labelCount": {
+            "type": "integer",
+            "description": "Number of labels a GLiNER model reads for this configuration.",
+            "minimum": 0
+          },
+          "llamaDetail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the llama server does not answer, or null."
+          },
+          "llamaReachable": {
+            "type": "boolean",
+            "description": "Whether the llama.cpp server answers."
+          },
+          "localEmbeddingInstalled": {
+            "type": "boolean",
+            "description": "Whether the selected embedding model is on disk."
+          },
+          "localRerankerInstalled": {
+            "type": "boolean",
+            "description": "Whether the selected reranker is on disk."
+          }
+        }
       }
     }
   }

@@ -56,10 +56,25 @@ const ROUTER_MODELS_DIR_KEY: &str = "router_models_dir";
 const ROUTER_EMBED_SOURCE_KEY: &str = "router_embed_source";
 const ROUTER_EMBED_LOCAL_MODEL_KEY: &str = "router_embed_local_model";
 const ROUTER_RERANK_MODEL_KEY: &str = "router_rerank_model";
+const ROUTER_LAYA_MODEL_KEY: &str = "router_laya_model";
 const ROUTER_LOCAL_DEVICE_KEY: &str = "router_local_device";
 const ROUTER_PHRASE_GATE_KEY: &str = "router_phrase_gate";
 const ROUTER_LIST_MATCH_KEY: &str = "router_list_match";
 const ROUTER_LIST_FLOOR_KEY: &str = "router_list_floor";
+const ROUTER_FALLBACK_LLM_KEY: &str = "router_fallback_llm";
+const ROUTER_SCRIPT_FALLBACK_KEY: &str = "router_script_fallback";
+const ROUTER_OPEN_VALUES_LLM_KEY: &str = "router_open_values_llm";
+
+/// Keys of the librarian in the settings table.
+///
+/// The librarian reads its own model, so a user may point it at a larger
+/// model than the resolver runs and keep the reply fast.
+const LIBRARIAN_ENABLED_KEY: &str = "librarian_enabled";
+const LIBRARIAN_BASE_URL_KEY: &str = "librarian_base_url";
+const LIBRARIAN_MODEL_KEY: &str = "librarian_model";
+
+const RESPONSE_QUALITY_KEY: &str = "response_quality";
+const RESPONSE_SPEED_KEY: &str = "response_speed";
 
 /// Key of the sentences the settings page tries against the resolver.
 ///
@@ -88,8 +103,18 @@ pub struct SettingsValues {
     pub gliner_threshold: f32,
     /// The stages of the layered router.
     pub router: RouterConfig,
+    /// Response quality 0..100. 0 is fastest, 100 is best. Speed is 100 - quality.
+    pub response_quality: u8,
+    /// Response speed 0..100. Always 100 - quality.
+    pub response_speed: u8,
     /// The sentences the settings page tries against the resolver.
     pub preview_sentences: Vec<String>,
+    /// Whether the librarian keeps a long term memory.
+    pub librarian_enabled: bool,
+    /// The base URL of the model server the librarian reads.
+    pub librarian_base_url: String,
+    /// The model the librarian reads.
+    pub librarian_model: String,
 }
 
 /// Service that persists the daemon settings.
@@ -134,7 +159,12 @@ impl SettingsService {
             gliner_device: config.resolver.gliner.device,
             gliner_threshold: config.resolver.gliner.threshold,
             router: config.resolver.router.clone(),
+            response_quality: 50,
+            response_speed: 50,
             preview_sentences: Vec::new(),
+            librarian_enabled: config.librarian.enabled,
+            librarian_base_url: config.librarian.base_url.clone(),
+            librarian_model: config.librarian.model.clone(),
         }
     }
 
@@ -152,6 +182,19 @@ impl SettingsService {
 
     /// Read every setting out of the table.
     async fn read_settings(&self) -> Result<SettingsValues, sea_orm::DbErr> {
+        let quality_opt = self
+            .get_number::<u8>(RESPONSE_QUALITY_KEY)
+            .await?
+            .map(|value| value.min(100));
+        let speed_opt = self
+            .get_number::<u8>(RESPONSE_SPEED_KEY)
+            .await?
+            .map(|value| value.min(100));
+        let (response_quality, response_speed) = match (quality_opt, speed_opt) {
+            (Some(quality), _) => (quality, 100 - quality),
+            (None, Some(speed)) => (100 - speed, speed),
+            (None, None) => (self.defaults.response_quality, self.defaults.response_speed),
+        };
         Ok(SettingsValues {
             queue_enabled: self
                 .get_flag(QUEUE_ENABLED_KEY)
@@ -185,11 +228,25 @@ impl SettingsService {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(self.defaults.gliner_threshold),
             router: self.read_router().await?,
+            response_quality,
+            response_speed,
             preview_sentences: self
                 .get_text(PREVIEW_SENTENCES_KEY)
                 .await?
                 .and_then(|value| serde_json::from_str(&value).ok())
                 .unwrap_or_default(),
+            librarian_enabled: self
+                .get_flag(LIBRARIAN_ENABLED_KEY)
+                .await?
+                .unwrap_or(self.defaults.librarian_enabled),
+            librarian_base_url: self
+                .get_text(LIBRARIAN_BASE_URL_KEY)
+                .await?
+                .unwrap_or_else(|| self.defaults.librarian_base_url.clone()),
+            librarian_model: self
+                .get_text(LIBRARIAN_MODEL_KEY)
+                .await?
+                .unwrap_or_else(|| self.defaults.librarian_model.clone()),
         })
     }
 
@@ -201,6 +258,32 @@ impl SettingsService {
     pub async fn set_preview_sentences(&self, sentences: &[String]) -> Result<(), sea_orm::DbErr> {
         let encoded = serde_json::to_string(sentences).unwrap_or_else(|_| "[]".to_string());
         self.put(PREVIEW_SENTENCES_KEY, encoded).await
+    }
+
+    /// Read the response quality. 0 is fastest, 100 is best.
+    pub async fn get_response_quality(&self) -> Result<u8, sea_orm::DbErr> {
+        Ok(self.get_settings().await?.response_quality)
+    }
+
+    /// Write the response quality and keep speed linked.
+    pub async fn set_response_quality(&self, quality: u8) -> Result<(), sea_orm::DbErr> {
+        let quality = quality.min(100);
+        let speed = 100 - quality;
+        self.put(RESPONSE_QUALITY_KEY, quality.to_string()).await?;
+        self.put(RESPONSE_SPEED_KEY, speed.to_string()).await
+    }
+
+    /// Read the response speed. 0 is slowest, 100 is fastest.
+    pub async fn get_response_speed(&self) -> Result<u8, sea_orm::DbErr> {
+        Ok(self.get_settings().await?.response_speed)
+    }
+
+    /// Write the response speed and keep quality linked.
+    pub async fn set_response_speed(&self, speed: u8) -> Result<(), sea_orm::DbErr> {
+        let speed = speed.min(100);
+        let quality = 100 - speed;
+        self.put(RESPONSE_SPEED_KEY, speed.to_string()).await?;
+        self.put(RESPONSE_QUALITY_KEY, quality.to_string()).await
     }
 
     /// Read the stages of the layered router out of the table.
@@ -268,6 +351,10 @@ impl SettingsService {
                 .get_text(ROUTER_RERANK_MODEL_KEY)
                 .await?
                 .unwrap_or_else(|| defaults.rerank_model.clone()),
+            laya_model: self
+                .get_text(ROUTER_LAYA_MODEL_KEY)
+                .await?
+                .unwrap_or_else(|| defaults.laya_model.clone()),
             local_device: self
                 .get_text(ROUTER_LOCAL_DEVICE_KEY)
                 .await?
@@ -286,6 +373,18 @@ impl SettingsService {
                 .get_number(ROUTER_LIST_FLOOR_KEY)
                 .await?
                 .unwrap_or(defaults.list_floor),
+            fallback_llm: self
+                .get_flag(ROUTER_FALLBACK_LLM_KEY)
+                .await?
+                .unwrap_or(defaults.fallback_llm),
+            script_fallback: self
+                .get_flag(ROUTER_SCRIPT_FALLBACK_KEY)
+                .await?
+                .unwrap_or(defaults.script_fallback),
+            open_values_llm: self
+                .get_flag(ROUTER_OPEN_VALUES_LLM_KEY)
+                .await?
+                .unwrap_or(defaults.open_values_llm),
         })
     }
 
@@ -332,6 +431,8 @@ impl SettingsService {
         .await?;
         self.put(ROUTER_RERANK_MODEL_KEY, config.rerank_model.clone())
             .await?;
+        self.put(ROUTER_LAYA_MODEL_KEY, config.laya_model.clone())
+            .await?;
         self.put(
             ROUTER_LOCAL_DEVICE_KEY,
             config.local_device.as_str().to_string(),
@@ -345,6 +446,12 @@ impl SettingsService {
         )
         .await?;
         self.put(ROUTER_LIST_FLOOR_KEY, config.list_floor.to_string())
+            .await?;
+        self.put(ROUTER_FALLBACK_LLM_KEY, flag(config.fallback_llm))
+            .await?;
+        self.put(ROUTER_SCRIPT_FALLBACK_KEY, flag(config.script_fallback))
+            .await?;
+        self.put(ROUTER_OPEN_VALUES_LLM_KEY, flag(config.open_values_llm))
             .await?;
         Ok(())
     }
@@ -423,6 +530,37 @@ impl SettingsService {
     /// Write the model name of the intent resolver.
     pub async fn set_resolver_model(&self, model: &str) -> Result<(), sea_orm::DbErr> {
         self.put(RESOLVER_MODEL_KEY, model.to_string()).await
+    }
+
+    /// Read whether the librarian keeps a long term memory.
+    pub async fn get_librarian_enabled(&self) -> Result<bool, sea_orm::DbErr> {
+        Ok(self.get_settings().await?.librarian_enabled)
+    }
+
+    /// Write whether the librarian keeps a long term memory.
+    pub async fn set_librarian_enabled(&self, enabled: bool) -> Result<(), sea_orm::DbErr> {
+        let value = if enabled { "true" } else { "false" }.to_string();
+        self.put(LIBRARIAN_ENABLED_KEY, value).await
+    }
+
+    /// Read the base URL of the model server the librarian reads.
+    pub async fn get_librarian_base_url(&self) -> Result<String, sea_orm::DbErr> {
+        Ok(self.get_settings().await?.librarian_base_url)
+    }
+
+    /// Write the base URL of the model server the librarian reads.
+    pub async fn set_librarian_base_url(&self, url: &str) -> Result<(), sea_orm::DbErr> {
+        self.put(LIBRARIAN_BASE_URL_KEY, url.to_string()).await
+    }
+
+    /// Read the model the librarian reads.
+    pub async fn get_librarian_model(&self) -> Result<String, sea_orm::DbErr> {
+        Ok(self.get_settings().await?.librarian_model)
+    }
+
+    /// Write the model the librarian reads.
+    pub async fn set_librarian_model(&self, model: &str) -> Result<(), sea_orm::DbErr> {
+        self.put(LIBRARIAN_MODEL_KEY, model.to_string()).await
     }
 
     /// Read one text value.

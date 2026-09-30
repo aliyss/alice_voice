@@ -8,11 +8,19 @@
 import type { DocumentHead } from '@builder.io/qwik-city';
 
 import type { SettingsPageData } from '~/components/pages/settings-page';
+import type {
+  MemoryConceptOutcome,
+  MemoryDeleteOutcome,
+} from '~/components/sections/settings/memory-search-section';
 
 import type {
   DependenciesDto,
   IntentDto,
   IntentListDto,
+  LibrarianStatusDto,
+  MemoryNodeDto,
+  MemoryQueryDto,
+  MemoryWriteRequestDto,
   ResolverStatusDto,
   SettingsDto,
 } from '~/types/dto';
@@ -37,6 +45,15 @@ import {
   updateIntent,
 } from '~/api/intents';
 import {
+  deleteConcept,
+  getLibrarianStatus,
+  lintMemory,
+  mergeConcept,
+  queryMemory,
+  retireFact,
+  writeMemory,
+} from '~/api/librarian';
+import {
   deleteGlinerModel,
   deleteLocalModel,
   downloadGlinerModel,
@@ -57,6 +74,9 @@ const RESOLVER_PATH = '/api/v1/resolver';
 
 /** The path of the dependency endpoint. */
 const DEPENDENCIES_PATH = '/api/v1/dependencies';
+
+/** The path of the librarian endpoint. */
+const LIBRARIAN_PATH = '/api/v1/librarian';
 
 /** The default settings when the daemon does not answer. */
 const FALLBACK_SETTINGS: SettingsDto = {
@@ -81,11 +101,20 @@ const FALLBACK_SETTINGS: SettingsDto = {
   routerEmbedSource: 'server',
   routerEmbedLocalModel: 'bge-small-en-v1.5',
   routerRerankModel: 'ms-marco-MiniLM-L-6-v2',
+  routerLayaModel: 'laya',
   routerLocalDevice: 'auto',
   routerPhraseGate: true,
   routerListMatch: 'lexical',
   routerListFloor: 0.8,
+  routerFallbackLlm: true,
+  routerScriptFallback: true,
+  routerOpenValuesLlm: true,
+  responseQuality: 50,
+  responseSpeed: 50,
   previewSentences: [],
+  librarianEnabled: true,
+  librarianBaseUrl: 'http://127.0.0.1:8012/v1',
+  librarianModel: 'qwen3.5-4b',
 };
 
 /** Read the stored settings, or null when the database does not answer. */
@@ -130,6 +159,31 @@ async function readResolverStatus(): Promise<ResolverStatusDto | null> {
   }
 }
 
+/** Read the state of the librarian, or null. */
+async function readLibrarianStatus(): Promise<LibrarianStatusDto | null> {
+  try {
+    return await backendGet<LibrarianStatusDto>(LIBRARIAN_PATH);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the concepts the memory holds, or an empty list.
+ *
+ * The request names no words, so the daemon answers with the concepts it
+ * changed last. The cloud and the list of the librarian section open on
+ * them, so a reader sees the memory without searching for it first.
+ */
+async function readMemories(): Promise<MemoryNodeDto[]> {
+  try {
+    const list = await backendGet<MemoryQueryDto>(`${LIBRARIAN_PATH}/memories`);
+    return list.nodes;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Read the settings, the intent configuration, and the resolver state.
  *
@@ -144,10 +198,20 @@ export const useSettings = routeLoader$(
       (await readSettings()) ?? dependencies?.configured ?? FALLBACK_SETTINGS;
     const intents = await readIntents();
     const status = await readResolverStatus();
+    const librarianStatus = await readLibrarianStatus();
+    const memories = await readMemories();
     // The address names the section, so a link opens the surface where it
     // is about to point.
     const section = readSettingsSection(url.searchParams.get('section'));
-    return { section, settings, intents, status, dependencies };
+    return {
+      section,
+      settings,
+      intents,
+      status,
+      dependencies,
+      librarianStatus,
+      memories,
+    };
   },
 );
 
@@ -171,6 +235,68 @@ export default component$(() => {
   const handleRemoveModel = $((id: string) => deleteGlinerModel(id));
   const handleDownloadLocalModel = $((id: string) => downloadLocalModel(id));
   const handleRemoveLocalModel = $((id: string) => deleteLocalModel(id));
+  const handleReadLibrarianStatus = $(() => getLibrarianStatus());
+  const handleSearchMemory = $(async (text: string) => {
+    const result = await queryMemory({ text });
+    if (result.failed) {
+      return { failed: true, message: result.message, nodes: [] };
+    }
+    return { failed: false, nodes: result.data.nodes };
+  });
+  const handleLintMemory = $(async () => {
+    const result = await lintMemory();
+    if (result.failed) {
+      return {
+        failed: true,
+        message: result.message,
+        duplicates: [],
+        orphans: [],
+        closed: [],
+      };
+    }
+    return {
+      failed: false,
+      duplicates: result.data.duplicates,
+      orphans: result.data.orphans,
+      closed: result.data.closed,
+    };
+  });
+  const handleSaveConcept = $(
+    async (input: MemoryWriteRequestDto): Promise<MemoryConceptOutcome> => {
+      const result = await writeMemory(input);
+      if (result.failed) {
+        return { failed: true, message: result.message, node: null };
+      }
+      return { failed: false, node: result.data };
+    },
+  );
+  const handleRetireFact = $(
+    async (id: string): Promise<MemoryConceptOutcome> => {
+      const result = await retireFact(id);
+      if (result.failed) {
+        return { failed: true, message: result.message, node: null };
+      }
+      return { failed: false, node: result.data };
+    },
+  );
+  const handleMergeConcept = $(
+    async (id: string, into: string): Promise<MemoryConceptOutcome> => {
+      const result = await mergeConcept(id, into);
+      if (result.failed) {
+        return { failed: true, message: result.message, node: null };
+      }
+      return { failed: false, node: result.data };
+    },
+  );
+  const handleDeleteConcept = $(
+    async (id: string): Promise<MemoryDeleteOutcome> => {
+      const result = await deleteConcept(id);
+      if (result.failed) {
+        return { failed: true, message: result.message };
+      }
+      return { failed: false };
+    },
+  );
 
   return (
     <SettingsPage
@@ -178,8 +304,17 @@ export default component$(() => {
       settings={data.value.settings}
       intents={data.value.intents}
       status={data.value.status}
+      librarianStatus={data.value.librarianStatus}
+      memories={data.value.memories}
       dependencies={data.value.dependencies}
       onUpdateSettings$={handleUpdateSettings}
+      onSearchMemory$={handleSearchMemory}
+      onSaveConcept$={handleSaveConcept}
+      onRetireFact$={handleRetireFact}
+      onMergeConcept$={handleMergeConcept}
+      onDeleteConcept$={handleDeleteConcept}
+      onLintMemory$={handleLintMemory}
+      onReadLibrarianStatus$={handleReadLibrarianStatus}
       onCreateIntent$={handleCreateIntent}
       onUpdateIntent$={handleUpdateIntent}
       onDeleteIntent$={handleDeleteIntent}
@@ -202,7 +337,7 @@ export const head: DocumentHead = {
     {
       name: 'description',
       content:
-        'Control the queue, the intent resolver, and the intents of the Alice Voice daemon.',
+        'Control the queue, the intent resolver, the memory, and the intents of the Alice Voice daemon.',
     },
   ],
 };

@@ -12,6 +12,8 @@ use crate::db;
 use crate::event_bus::EventBus;
 use crate::execution::CommandRunner;
 use crate::intent::{defaults, EntityScripts, IntentService};
+use crate::librarian::{LibrarianService, LibrarianStore};
+use crate::pending_script::PendingScriptService;
 use crate::queue::QueueService;
 use crate::resolver::client::LlamaClient;
 use crate::resolver::{GlinerResolver, GlinerStore, LocalEngine, LocalStore, ResolverService};
@@ -69,12 +71,57 @@ pub async fn run(config: CoreConfig) -> Result<(), Box<dyn std::error::Error>> {
         scripts.clone(),
     );
 
-    // 3. Wire the services and the event bus into the server.
+    // 2b2. Load the built in reader of the router in the background, so the
+    //      first turn of the daemon answers as fast as the ones after it.
+    let warming = resolver.clone();
+    tokio::spawn(async move { warming.warm().await });
+
+    // 2c. Build the publisher of the turn events. The memory publishes on
+    //     it as well, because the worker learns a turn after the daemon
+    //     answered it and the transcript has to hear about it then.
     let (events, _) = EventBus::new();
+
+    // 2d. Build the librarian, the long term memory of the daemon. A
+    //     background worker reads the episodes the turns stored, so the
+    //     model that writes the memory never slows a reply.
+    let librarian = LibrarianService::new(
+        LibrarianStore::new(db.clone()),
+        LlamaClient::new()?,
+        settings.clone(),
+        Arc::clone(&config),
+        events.clone(),
+    );
+    if config.librarian.enabled {
+        let worker = librarian.clone();
+        tokio::spawn(async move {
+            loop {
+                let wait = match worker.ingest_once().await {
+                    Ok(true) => Duration::from_millis(250),
+                    Ok(false) => {
+                        // The queue is empty, so this is the quiet moment
+                        // to forget the words of the turns the memory
+                        // read long ago. The facts of them stay.
+                        if let Err(err) = worker.maintain().await {
+                            tracing::warn!(error = %err, "the librarian could not prune the queue");
+                        }
+                        Duration::from_secs(5)
+                    }
+                    Err(err) => {
+                        tracing::warn!(error = %err, "the librarian worker failed");
+                        Duration::from_secs(5)
+                    }
+                };
+                tokio::time::sleep(wait).await;
+            }
+        });
+    }
+
+    // 3. Wire the services into the server.
     let stores = AppStores {
         db: db.clone(),
         conversations: ConversationService::new(db.clone()),
         queue: QueueService::new(db.clone()),
+        pending_scripts: PendingScriptService::new(db.clone()),
         settings,
         intents,
         resolver,
@@ -85,6 +132,7 @@ pub async fn run(config: CoreConfig) -> Result<(), Box<dyn std::error::Error>> {
             Duration::from_secs(config.execution.timeout_secs),
             config.execution.max_output_bytes,
         ),
+        librarian,
     };
 
     server::serve(config, stores, events).await?;

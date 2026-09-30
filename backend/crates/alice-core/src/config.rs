@@ -20,6 +20,8 @@ pub struct CoreConfig {
     pub execution: ExecutionConfig,
     /// Configuration of the scripts that provide entity values.
     pub entity_script: EntityScriptConfig,
+    /// Configuration of the librarian, the long term memory of the daemon.
+    pub librarian: LibrarianConfig,
 }
 
 /// Server configuration.
@@ -173,6 +175,15 @@ pub enum DecideEngine {
     /// none of it. Only the short list reaches the model, so the prompt
     /// stays small however large the catalog is.
     Generative,
+    /// A built in decision model reads the short list and answers with one
+    /// of it and a probability for every option.
+    ///
+    /// The model is a non-autoregressive encoder: every option is scored
+    /// in one forward pass and the model never writes text. The allowed
+    /// answers are named before inference, so the choice cannot drift from
+    /// the short list and the probability of the chosen option is a
+    /// calibrated number rather than a token the daemon has to read back.
+    Laya,
 }
 
 impl DecideEngine {
@@ -182,6 +193,7 @@ impl DecideEngine {
             Self::Score => "score",
             Self::Rerank => "rerank",
             Self::Generative => "generative",
+            Self::Laya => "laya",
         }
     }
 
@@ -190,6 +202,7 @@ impl DecideEngine {
         match value.trim().to_lowercase().as_str() {
             "rerank" => Self::Rerank,
             "generative" => Self::Generative,
+            "laya" => Self::Laya,
             _ => Self::Score,
         }
     }
@@ -201,7 +214,7 @@ impl DecideEngine {
 
     /// Whether the engine reads a built in model that has to be on disk.
     pub fn uses_local_model(&self) -> bool {
-        matches!(self, Self::Rerank)
+        matches!(self, Self::Rerank | Self::Laya)
     }
 }
 
@@ -254,6 +267,20 @@ pub enum ExtractEngine {
     /// The built in GLiNER model finds the span of every label of the
     /// chosen intent.
     Spans,
+    /// The built in decision model chooses one value of every list the
+    /// chosen intent offers, in one forward pass.
+    ///
+    /// The engine reads what the lists engine reads: a closed entity takes
+    /// exactly one of the values it carries and a script entity takes one
+    /// value of its live list. The difference is the reader behind the
+    /// choice: the rules of the matcher or the model, which reads the
+    /// message and every value together as one typed question.
+    ///
+    /// An open entity names a value the user said rather than one of a
+    /// list, so no fixed set of answers exists for the model to score. The
+    /// engine therefore leaves an open entity without a value, like the
+    /// lists engine does, and the turn asks the user for it.
+    Laya,
     /// A language model reads the values of the chosen intent.
     Generative,
 }
@@ -264,6 +291,7 @@ impl ExtractEngine {
         match self {
             Self::Lists => "lists",
             Self::Spans => "spans",
+            Self::Laya => "laya",
             Self::Generative => "generative",
         }
     }
@@ -272,9 +300,15 @@ impl ExtractEngine {
     pub fn from_stored(value: &str) -> Self {
         match value.trim().to_lowercase().as_str() {
             "spans" => Self::Spans,
+            "laya" => Self::Laya,
             "generative" => Self::Generative,
             _ => Self::Lists,
         }
+    }
+
+    /// Whether the engine reads a built in model that has to be on disk.
+    pub fn uses_local_model(&self) -> bool {
+        matches!(self, Self::Laya)
     }
 }
 
@@ -397,6 +431,13 @@ pub enum LocalDevice {
     Cpu,
     /// Run on a CUDA capable graphics card.
     Cuda,
+    /// Run on a graphics device via OpenVINO (Intel iGPU/NPU) or CUDA.
+    ///
+    /// `gpu` is the portable name the frontend and `nix-shell --arg gpu`
+    /// use. On a CUDA build it maps to the CUDA provider, on an OpenVINO
+    /// build to the OpenVINO provider, and on a build with both it prefers
+    /// the best provider the machine offers right now.
+    Gpu,
 }
 
 impl LocalDevice {
@@ -406,6 +447,7 @@ impl LocalDevice {
             Self::Auto => "auto",
             Self::Cpu => "cpu",
             Self::Cuda => "cuda",
+            Self::Gpu => "gpu",
         }
     }
 
@@ -414,6 +456,7 @@ impl LocalDevice {
         match value.trim().to_lowercase().as_str() {
             "cpu" => Self::Cpu,
             "cuda" => Self::Cuda,
+            "gpu" | "openvino" => Self::Gpu,
             _ => Self::Auto,
         }
     }
@@ -445,6 +488,59 @@ pub struct ResolverConfig {
     pub gliner: GlinerConfig,
     /// Configuration of the layered router.
     pub router: RouterConfig,
+    /// Configuration of the command catalog of the script fallback.
+    pub catalog: CatalogConfig,
+}
+
+/// Configuration of the command catalog of the script fallback.
+///
+/// A message that no intent matched may be answered with a shell script,
+/// and the model writes a better script when it reads the commands of the
+/// machine. The catalog is the list of those commands, and the daemon
+/// ranks it against the message so only the closest commands reach the
+/// prompt. A machine holds far more commands than one prompt can carry,
+/// so every part of that work is a switch of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CatalogConfig {
+    /// Whether the daemon reads the commands of the machine.
+    ///
+    /// Off, the fallback model writes its script against no command list
+    /// at all, so the turn reads neither fish nor the manual pages.
+    pub enabled: bool,
+    /// Whether the daemon ranks the catalog against the message.
+    ///
+    /// On, the daemon reads a vector of every command, so the model reads
+    /// the commands that fit the message as meaning rather than as
+    /// spelling. Off, the model reads the first `limit` commands in name
+    /// order, which needs no vector and no model server.
+    pub rank: bool,
+    /// How long one built catalog stays fresh, in seconds.
+    ///
+    /// The catalog changes when the user installs a command, not when a
+    /// message arrives, so a long time to live costs nothing.
+    pub ttl_secs: u64,
+    /// Largest number of commands the model reads in one prompt.
+    pub limit: usize,
+    /// Largest number of commands the daemon keeps. Zero keeps every
+    /// command.
+    ///
+    /// A command the manual pages describe is kept before a name that no
+    /// page and no completion describes, so a smaller catalog drops the
+    /// aliases and the launchers before it drops a real tool. A smaller
+    /// catalog is cheaper to read and faster to rank.
+    pub max_entries: usize,
+}
+
+impl Default for CatalogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rank: true,
+            ttl_secs: 900,
+            limit: 40,
+            max_entries: 0,
+        }
+    }
 }
 
 /// Configuration of the layered router.
@@ -498,6 +594,10 @@ pub struct RouterConfig {
     ///
     /// The daemon reads this model only when the decision stage reranks.
     pub rerank_model: String,
+    /// Identifier of the built in decision model.
+    ///
+    /// The daemon reads this model only when the decision stage asks Laya.
+    pub laya_model: String,
     /// The device a built in model of the router runs on.
     pub local_device: LocalDevice,
     /// Whether a phrase of an intent counts only when the message shares
@@ -510,6 +610,41 @@ pub struct RouterConfig {
     pub list_match: ListMatch,
     /// Smallest cosine similarity an embedding match of a value needs.
     pub list_floor: f32,
+    /// Whether the language model answers a message no intent matched.
+    ///
+    /// The router ends a turn that no intent fits with a refusal, and the
+    /// daemon replies that it could not match the message. With this on,
+    /// the language model answers the message itself, with the earlier
+    /// turns as its context, so a message the catalog does not hold is
+    /// still answered. The daemon runs no command either way.
+    ///
+    /// The built in decision model reads what the message needs before the
+    /// language model is asked, unless the script fallback below is off:
+    /// whether the user wants words or a task of this machine is one typed
+    /// `choice` question over the message alone, and the language model is
+    /// then asked for the answer or for the script and never for the choice
+    /// between them. A model that is not on disk, or one that reads the
+    /// message as ambiguous, leaves the choice to the language model.
+    pub fallback_llm: bool,
+    /// Whether the language model may write a shell script for a message
+    /// no intent matched.
+    ///
+    /// With this on, the model reads the commands of the machine and may
+    /// answer with one script instead of words. The daemon runs no script
+    /// of its own accord: the user approves the script first. The toggle
+    /// is separate from the fallback above, so a user may keep the spoken
+    /// answer and refuse every script.
+    pub script_fallback: bool,
+    /// Whether the language model reads an open value the built in reader
+    /// found none of.
+    ///
+    /// An open value is the words the user said, so only a reader of words
+    /// reads it. The built in span reader reads most of them in a few
+    /// milliseconds, and this reads what is left with the language model.
+    /// With it on, a message that names a value no reader else can find is
+    /// still answered; with it off, the turn asks the user for the value
+    /// instead of paying about two seconds of the model.
+    pub open_values_llm: bool,
 }
 
 impl Default for RouterConfig {
@@ -529,10 +664,14 @@ impl Default for RouterConfig {
             embed_source: EmbedSource::Server,
             embed_local_model: "bge-small-en-v1.5".to_string(),
             rerank_model: "ms-marco-MiniLM-L-6-v2".to_string(),
+            laya_model: "laya".to_string(),
             local_device: LocalDevice::Auto,
             phrase_gate: true,
             list_match: ListMatch::Lexical,
             list_floor: 0.80,
+            fallback_llm: true,
+            script_fallback: true,
+            open_values_llm: true,
         }
     }
 }
@@ -557,7 +696,68 @@ impl RouterConfig {
     pub fn uses_local_models(&self) -> bool {
         let vectors_from_disk = matches!(self.embed_source, EmbedSource::Local)
             && (self.retrieve.uses_embeddings() || self.list_match.uses_embeddings());
-        vectors_from_disk || self.decide.uses_local_model()
+        vectors_from_disk || self.decide.uses_local_model() || self.extract.uses_local_model()
+    }
+}
+
+/// Configuration of the librarian, the long term memory of the daemon.
+///
+/// The librarian keeps what the daemon learns about the user across
+/// sessions. A turn that meets no intent writes one episode, a background
+/// worker reads that episode with a model of its own, and the facts it
+/// reads become nodes and dated edges.
+///
+/// The memory belongs to the branch that no intent reaches: only that
+/// branch reads it and only that branch teaches it, so a memory never
+/// bends the choice of an intent. The write is separate from the reply,
+/// so reading a memory never slows a turn and a memory model that is down
+/// never stops one.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LibrarianConfig {
+    /// Whether the daemon keeps a memory at all.
+    ///
+    /// Off, a turn writes no episode and no memory reaches a prompt, so
+    /// the daemon runs exactly as it does without the librarian.
+    pub enabled: bool,
+    /// Base URL of the OpenAI compatible server the librarian reads.
+    ///
+    /// The librarian may point at a larger model than the resolver does,
+    /// because it reads a whole turn and answers with strict JSON.
+    pub base_url: String,
+    /// Model name the librarian server answers to.
+    pub model: String,
+    /// Time the librarian waits for one extraction, in seconds.
+    ///
+    /// The write runs in the background, so this is longer than the
+    /// timeout of the resolver.
+    pub timeout_secs: u64,
+    /// Largest answer the librarian reads from the model.
+    pub max_tokens: u32,
+    /// Largest number of memory nodes the seed of a turn carries.
+    ///
+    /// The seed is what the model knows a memory exists before it asks
+    /// for one, so it is small on purpose.
+    pub context_nodes: usize,
+    /// Days the raw text of a read turn is kept, or zero to keep it.
+    ///
+    /// The memory keeps the fact a turn taught and the message it came
+    /// from. The words of the turn are the bulk of the store and the risk
+    /// of it, so they outlive their use only as long as a reader may want
+    /// to read what the model learned from them.
+    pub episode_retention_days: u64,
+}
+
+impl Default for LibrarianConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            base_url: "http://127.0.0.1:8012/v1".to_string(),
+            model: "qwen3.5-4b".to_string(),
+            timeout_secs: 60,
+            max_tokens: 768,
+            context_nodes: 12,
+            episode_retention_days: 30,
+        }
     }
 }
 
@@ -668,6 +868,7 @@ impl Default for ResolverConfig {
             thinking: false,
             gliner: GlinerConfig::default(),
             router: RouterConfig::default(),
+            catalog: CatalogConfig::default(),
         }
     }
 }
@@ -835,6 +1036,9 @@ impl CoreConfig {
         if let Some(value) = read_text("ALICE_ROUTER_RERANK_MODEL") {
             cfg.resolver.router.rerank_model = value;
         }
+        if let Some(value) = read_text("ALICE_ROUTER_LAYA_MODEL") {
+            cfg.resolver.router.laya_model = value;
+        }
         if let Some(value) = read_text("ALICE_ROUTER_LOCAL_DEVICE") {
             cfg.resolver.router.local_device = LocalDevice::from_stored(&value);
         }
@@ -846,6 +1050,51 @@ impl CoreConfig {
         }
         if let Some(value) = read_number("ALICE_ROUTER_LIST_FLOOR") {
             cfg.resolver.router.list_floor = value;
+        }
+        if let Some(value) = read_flag("ALICE_ROUTER_FALLBACK_LLM") {
+            cfg.resolver.router.fallback_llm = value;
+        }
+        if let Some(value) = read_flag("ALICE_ROUTER_SCRIPT_FALLBACK") {
+            cfg.resolver.router.script_fallback = value;
+        }
+        if let Some(value) = read_flag("ALICE_ROUTER_OPEN_VALUES_LLM") {
+            cfg.resolver.router.open_values_llm = value;
+        }
+        if let Some(value) = read_flag("ALICE_CATALOG_ENABLED") {
+            cfg.resolver.catalog.enabled = value;
+        }
+        if let Some(value) = read_flag("ALICE_CATALOG_RANK") {
+            cfg.resolver.catalog.rank = value;
+        }
+        if let Some(value) = read_number("ALICE_CATALOG_TTL_SECS") {
+            cfg.resolver.catalog.ttl_secs = value;
+        }
+        if let Some(value) = read_number("ALICE_CATALOG_LIMIT") {
+            cfg.resolver.catalog.limit = value;
+        }
+        if let Some(value) = read_number("ALICE_CATALOG_MAX_ENTRIES") {
+            cfg.resolver.catalog.max_entries = value;
+        }
+        if let Some(value) = read_flag("ALICE_LIBRARIAN_ENABLED") {
+            cfg.librarian.enabled = value;
+        }
+        if let Some(url) = read_text("ALICE_LIBRARIAN_BASE_URL") {
+            cfg.librarian.base_url = url;
+        }
+        if let Some(model) = read_text("ALICE_LIBRARIAN_MODEL") {
+            cfg.librarian.model = model;
+        }
+        if let Some(value) = read_number("ALICE_LIBRARIAN_TIMEOUT_SECS") {
+            cfg.librarian.timeout_secs = value;
+        }
+        if let Some(value) = read_number("ALICE_LIBRARIAN_MAX_TOKENS") {
+            cfg.librarian.max_tokens = value;
+        }
+        if let Some(value) = read_number("ALICE_LIBRARIAN_CONTEXT_NODES") {
+            cfg.librarian.context_nodes = value;
+        }
+        if let Some(value) = read_number("ALICE_LIBRARIAN_EPISODE_RETENTION_DAYS") {
+            cfg.librarian.episode_retention_days = value;
         }
         cfg
     }
@@ -967,6 +1216,26 @@ impl CoreConfig {
                 reason: "resolver.router.rerank_model is empty".to_string(),
             });
         }
+        if router.laya_model.trim().is_empty() {
+            return Err(crate::error::CoreError::ConfigInvalid {
+                reason: "resolver.router.laya_model is empty".to_string(),
+            });
+        }
+        if self.librarian.enabled && self.librarian.base_url.trim().is_empty() {
+            return Err(crate::error::CoreError::ConfigInvalid {
+                reason: "librarian.base_url is empty".to_string(),
+            });
+        }
+        if self.librarian.enabled && self.librarian.model.trim().is_empty() {
+            return Err(crate::error::CoreError::ConfigInvalid {
+                reason: "librarian.model is empty".to_string(),
+            });
+        }
+        if self.librarian.enabled && self.librarian.timeout_secs == 0 {
+            return Err(crate::error::CoreError::ConfigInvalid {
+                reason: "librarian.timeout_secs is zero".to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -1062,6 +1331,19 @@ mod tests {
         assert_eq!(router.extract, ExtractEngine::Spans);
         assert!(router.phrase_gate);
         assert_eq!(router.top_k, 8);
+        assert!(router.fallback_llm);
+        assert!(router.script_fallback);
+    }
+
+    #[test]
+    fn the_catalog_defaults_read_the_whole_machine() {
+        let cfg = CoreConfig::default();
+        let catalog = &cfg.resolver.catalog;
+        assert!(catalog.enabled);
+        assert!(catalog.rank);
+        assert_eq!(catalog.ttl_secs, 900);
+        assert_eq!(catalog.limit, 40);
+        assert_eq!(catalog.max_entries, 0);
     }
 
     #[test]
@@ -1127,6 +1409,7 @@ mod tests {
         assert_eq!(router.embed_source, EmbedSource::Server);
         assert_eq!(router.embed_local_model, "bge-small-en-v1.5");
         assert_eq!(router.rerank_model, "ms-marco-MiniLM-L-6-v2");
+        assert_eq!(router.laya_model, "laya");
         assert_eq!(router.local_device, LocalDevice::Auto);
     }
 
@@ -1161,6 +1444,15 @@ mod tests {
     }
 
     #[test]
+    fn the_laya_engine_reads_a_built_in_model_and_no_server() {
+        assert!(DecideEngine::Laya.uses_local_model());
+        assert!(!DecideEngine::Laya.uses_model());
+        assert_eq!(DecideEngine::from_stored(" laya "), DecideEngine::Laya);
+        assert_eq!(DecideEngine::Laya.as_str(), "laya");
+        assert_eq!(DecideEngine::from_stored("Laya"), DecideEngine::Laya);
+    }
+
+    #[test]
     fn validate_rejects_a_blank_local_model() {
         let mut cfg = CoreConfig::default();
         cfg.resolver.router.embed_local_model = "  ".to_string();
@@ -1168,6 +1460,10 @@ mod tests {
 
         let mut cfg = CoreConfig::default();
         cfg.resolver.router.rerank_model = "  ".to_string();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = CoreConfig::default();
+        cfg.resolver.router.laya_model = "  ".to_string();
         assert!(cfg.validate().is_err());
     }
 

@@ -7,6 +7,7 @@
  */
 import type {
   DaemonStateDto,
+  MemorySavedFactDto,
   MessageEntityDto,
   ResolverEngineDto,
   StatusDto,
@@ -42,6 +43,23 @@ export type AuraState =
 export type TurnOutcome = 'ok' | 'failed';
 
 /**
+ * One shell script the model wrote for a message no intent matched.
+ *
+ * The daemon runs no script of its own accord, so the surface reads the
+ * script and its rating and waits for the decision of the user.
+ */
+export interface ProposedScript {
+  /** The stable identifier of the stored script. */
+  id: string;
+  /** One sentence about what the script does. */
+  summary: string;
+  /** The shell script. */
+  script: string;
+  /** How rough the script is on the machine, between 0 and 100. */
+  destructiveness: number;
+}
+
+/**
  * The turn that is running right now.
  *
  * The daemon streams every stage of a turn over the socket: the tokens of
@@ -49,9 +67,57 @@ export type TurnOutcome = 'ok' | 'failed';
  * output of that command. The live turn keeps those stages so the chat
  * page shows the work while it happens.
  */
+/**
+ * What the memory learned from one stored turn.
+ *
+ * The memory reads a turn after the daemon answered it, so this arrives on
+ * its own and belongs to the message of the turn rather than to the stages
+ * of the live one.
+ */
+export interface LiveMemory {
+  /** The message the memory learned from. */
+  messageId: string;
+  /** The facts the turn taught, in the order the memory wrote them. */
+  facts: MemorySavedFactDto[];
+}
+
+/**
+ * One stage of the turn, as the resolver named it while it ran.
+ *
+ * The resolver reports a stage as it starts, so the surface reads the step
+ * the daemon is on rather than one label that stands still for the whole
+ * read. A stage that reads a model takes seconds, so the list is what
+ * tells a reader that the turn moves.
+ */
+export interface LiveStage {
+  /**
+   * The stage: `fast_path`, `retrieve`, `decide`, `extract`, `answer`, or
+   * `script`.
+   */
+  stage: string;
+  /** One sentence about what the stage is doing. */
+  detail: string;
+  /**
+   * The time the stage started, in ISO 8601 format.
+   *
+   * The resolver reports a stage when it starts it, so the gap between two
+   * stages is the time the first one took and the field is what a reader
+   * sees when they ask where the seconds of a turn went.
+   */
+  at: string;
+}
+
+/** The stages of the turn the daemon handles right now. */
 export interface LiveTurnState {
   /** The answer the resolver has read so far. */
   thinking: string;
+  /**
+   * The stages the resolver has entered, oldest first.
+   *
+   * The list grows as the turn runs, so the last entry is the step the
+   * daemon is on right now.
+   */
+  stages: LiveStage[];
   /** The name of the resolved intent, or null. */
   intent: string | null;
   /** The probability of the chosen option, or null. */
@@ -70,6 +136,16 @@ export interface LiveTurnState {
   command: string | null;
   /** The output lines of the command, newest last. */
   output: string[];
+  /** The script the model wrote and the user has not decided about. */
+  script: ProposedScript | null;
+  /** What the memory learned last, or null when it learned nothing yet. */
+  memory: LiveMemory | null;
+  /**
+   * The time the turn started, in ISO 8601 format, or null before the
+   * daemon accepted a message. The surface counts from it, so a user
+   * reads how long the turn has been running and not only that it runs.
+   */
+  startedAt: string | null;
 }
 
 /** The live status of the daemon and of the socket link. */
@@ -137,6 +213,14 @@ const ENERGY_BY_DAEMON_STATE: Record<DaemonStateDto, number> = {
 /** The largest part of the model answer the live turn keeps. */
 const MAX_THINKING_CHARS = 2000;
 
+/**
+ * The largest number of stages the live turn keeps.
+ *
+ * A turn passes a handful of stages even when it falls back, so the list
+ * holds one turn and drops the oldest entry of a turn that runs long.
+ */
+const MAX_STAGES = 8;
+
 /** The largest number of command output lines the live turn keeps. */
 const MAX_OUTPUT_LINES = 24;
 
@@ -144,6 +228,7 @@ const MAX_OUTPUT_LINES = 24;
 export function createEmptyLiveTurn(): LiveTurnState {
   return {
     thinking: '',
+    stages: [],
     intent: null,
     confidence: null,
     intentEngine: null,
@@ -153,6 +238,9 @@ export function createEmptyLiveTurn(): LiveTurnState {
     entities: [],
     command: null,
     output: [],
+    script: null,
+    memory: null,
+    startedAt: null,
   };
 }
 
@@ -215,13 +303,19 @@ export function stateForEvent(event: SystemEventDto): DaemonStateDto | null {
     case 'TranscriptCorrected':
       return 'Transcribing';
     case 'IntentThinking':
+    case 'IntentStage':
     case 'IntentResolved':
     case 'IntentValuesRead':
     case 'IntentNotFound':
       return 'Resolving';
     case 'ExecutionStarted':
     case 'ExecutionOutput':
+    case 'ScriptApproved':
       return 'Executing';
+    case 'ScriptDenied':
+      return 'Idle';
+    case 'ScriptProposed':
+      return 'Resolving';
     case 'ExecutionCompleted':
     case 'MessageReplied':
       return 'Idle';
@@ -256,7 +350,9 @@ export function applyLiveEvent(
 ): LiveTurnState {
   switch (event.payload.type) {
     case 'MessageQueued':
-      return createEmptyLiveTurn();
+      // The queued event is the start of the turn, so the surface counts
+      // the wait from it.
+      return { ...createEmptyLiveTurn(), startedAt: event.at };
     case 'IntentThinking':
       return {
         ...live,
@@ -265,6 +361,21 @@ export function applyLiveEvent(
           MAX_THINKING_CHARS,
         ),
       };
+    case 'IntentStage': {
+      const stages = [
+        ...live.stages,
+        {
+          stage: event.payload.stage,
+          detail: event.payload.detail,
+          at: event.at,
+        },
+      ];
+      return {
+        ...live,
+        stages:
+          stages.length <= MAX_STAGES ? stages : stages.slice(-MAX_STAGES),
+      };
+    }
     case 'IntentResolved':
       return {
         ...live,
@@ -290,9 +401,53 @@ export function applyLiveEvent(
           MAX_OUTPUT_LINES,
         ),
       };
+    case 'ScriptProposed':
+      return {
+        ...live,
+        script: {
+          id: event.payload.id,
+          summary: event.payload.summary,
+          script: event.payload.script,
+          destructiveness: event.payload.destructiveness,
+        },
+      };
+    case 'ScriptApproved':
+    case 'ScriptDenied':
+      return { ...live, script: null };
+    case 'MemorySaved':
+      // The memory reads the turn in the background, so this arrives after
+      // the turn ended and names the message it learned from.
+      return {
+        ...live,
+        memory: {
+          messageId: event.payload.message_id,
+          facts: event.payload.facts,
+        },
+      };
     default:
       return live;
   }
+}
+
+/**
+ * The time every stage of a running turn has taken, oldest first.
+ *
+ * A stage ends when the next one starts, so the gap between two stages is
+ * the time of the first one. The last stage has no next one yet, so it is
+ * measured down to `now` and grows while the daemon works. A stage whose
+ * time cannot be read reports zero rather than a number a reader would
+ * mistake for a measurement.
+ */
+export function stageDurations(stages: LiveStage[], now: number): number[] {
+  return stages.map((stage, index) => {
+    const next = index + 1 < stages.length ? stages[index + 1] : null;
+    const start = Date.parse(stage.at);
+    const end = next === null ? now : Date.parse(next.at);
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+      return 0;
+    }
+    return Math.max(0, end - start);
+  });
 }
 
 /** Fold one socket event into the live status. */

@@ -6,12 +6,17 @@
 
 use std::sync::Arc;
 
+use chrono::Utc;
+use uuid::Uuid;
+
 use alice_core::config::{CoreConfig, ResolverEngine};
 use alice_core::dto::SystemEventPayloadDto;
 
 use crate::event_bus::EventBus;
 use crate::execution::{CommandOutcome, CommandRunner};
 use crate::intent::{render_command, strip_placeholders};
+use crate::librarian::LibrarianService;
+use crate::resolver::answer::ScriptProposal;
 use crate::resolver::{
     Resolution, ResolveError, ResolveRequest, ResolvedIntent, ResolverService, RouteReport,
 };
@@ -57,6 +62,15 @@ pub struct HandlingOutcome {
     /// How the resolver read a message it chose no intent for, or null when
     /// the resolver did not read the message at all.
     pub unmatched: Option<UnmatchedRead>,
+    /// The script the model wrote for the message, or null when none did.
+    ///
+    /// The daemon runs no script of its own accord, so the caller stores
+    /// it and waits for the decision of the user.
+    pub proposal: Option<ScriptProposal>,
+    /// What the daemon read from the long term memory for this turn, or
+    /// empty. The memory belongs to the branch that no intent matches, so
+    /// only a turn of that branch carries the seed.
+    pub memory_seed: String,
     /// The reply the daemon stores.
     pub reply: String,
 }
@@ -72,6 +86,8 @@ struct ResolveReply {
     reply: String,
     /// How the resolver read the message, or null when it did not read it.
     unmatched: Option<Box<UnmatchedRead>>,
+    /// The script the model wrote, or null when none did.
+    proposal: Option<ScriptProposal>,
 }
 
 impl ResolveReply {
@@ -80,14 +96,28 @@ impl ResolveReply {
         Self {
             reply,
             unmatched: None,
+            proposal: None,
         }
     }
 
     /// The reply of a message the resolver read and chose no intent for.
-    fn unmatched(read: UnmatchedRead) -> Self {
+    ///
+    /// The reply of the resolver is the answer the fallback model wrote,
+    /// or null when the fallback is off or the model did not answer. A
+    /// model that wrote a script rather than an answer carries the script,
+    /// so the reply names it. A turn with neither keeps the plain refusal.
+    fn unmatched(
+        read: UnmatchedRead,
+        reply: Option<String>,
+        proposal: Option<ScriptProposal>,
+    ) -> Self {
+        let reply = reply
+            .or_else(|| proposal.as_ref().map(script_reply))
+            .unwrap_or_else(|| NO_INTENT_REPLY.to_string());
         Self {
-            reply: NO_INTENT_REPLY.to_string(),
+            reply,
             unmatched: Some(Box::new(read)),
+            proposal,
         }
     }
 }
@@ -103,6 +133,8 @@ pub struct HandlingDeps {
     pub events: EventBus,
     /// The typed configuration.
     pub config: Arc<CoreConfig>,
+    /// The long term memory of the daemon.
+    pub librarian: LibrarianService,
 }
 
 /// How much of a turn the daemon carries out.
@@ -127,8 +159,57 @@ impl TurnRun {
 }
 
 /// Handle one message and return what it produced.
-pub async fn handle(deps: &HandlingDeps, request: &ResolveRequest) -> HandlingOutcome {
-    read(deps, request, TurnRun::Full).await
+///
+/// The message of the turn travels with it, so the memory marks the turn
+/// it learned from rather than the turn that happens to be on screen.
+pub async fn handle(
+    deps: &HandlingDeps,
+    request: &ResolveRequest,
+    message_id: Option<Uuid>,
+) -> HandlingOutcome {
+    let outcome = read(deps, request, TurnRun::Full).await;
+    record_episode(deps, request, message_id, &outcome).await;
+    outcome
+}
+
+/// Store one handled turn for the librarian worker.
+///
+/// The memory belongs to the branch that no intent reaches, so only a turn
+/// the catalog could not match becomes an episode. A turn that ran the
+/// command of an intent is not evidence about the user: it was a command
+/// of the catalog and the daemon already holds every word of it.
+///
+/// The write is one insert of a row, so the reply never waits for the
+/// model that reads the turn later. A store that does not answer is a
+/// warning: a turn the daemon handled is worth more than the memory of
+/// it, and the memory catches up on the next turn.
+async fn record_episode(
+    deps: &HandlingDeps,
+    request: &ResolveRequest,
+    message_id: Option<Uuid>,
+    outcome: &HandlingOutcome,
+) {
+    if request.text.trim().is_empty() {
+        return;
+    }
+    if outcome.intent.is_some() {
+        return;
+    }
+    let intent = outcome.intent.as_ref().map(|intent| intent.name.as_str());
+    if let Err(err) = deps
+        .librarian
+        .enqueue(
+            Uuid::new_v4(),
+            message_id,
+            &request.text,
+            &outcome.reply,
+            intent,
+            Utc::now(),
+        )
+        .await
+    {
+        tracing::warn!(error = %err, "the librarian could not store one episode");
+    }
 }
 
 /// Read one message without running the command of its intent.
@@ -143,8 +224,17 @@ pub async fn preview(deps: &HandlingDeps, request: &ResolveRequest) -> HandlingO
 
 /// Read one message and carry out the part of the turn the run asks for.
 async fn read(deps: &HandlingDeps, request: &ResolveRequest, run: TurnRun) -> HandlingOutcome {
+    // 0. Seed the memory of the daemon into the turn. The seed reaches
+    //    the model that answers a message no intent matched and no other
+    //    reader: the decision and the extraction render the message alone.
+    let mut seeded = request.clone();
+    // The seed travels with the outcome as well, so the transcript reports
+    // what the daemon read of the memory for this turn.
+    let memory_seed = deps.librarian.seed(&request.text).await;
+    seeded.memory_seed = memory_seed.clone();
+
     // 1. Resolve the intent of the message.
-    let intent = match resolve_intent(deps, request, run).await {
+    let intent = match resolve_intent(deps, &seeded, run).await {
         Ok(intent) => intent,
         Err(failure) => {
             return HandlingOutcome {
@@ -152,6 +242,8 @@ async fn read(deps: &HandlingDeps, request: &ResolveRequest, run: TurnRun) -> Ha
                 execution: None,
                 command: None,
                 unmatched: failure.unmatched.map(|read| *read),
+                proposal: failure.proposal,
+                memory_seed,
                 reply: failure.reply,
             }
         }
@@ -188,6 +280,8 @@ async fn read(deps: &HandlingDeps, request: &ResolveRequest, run: TurnRun) -> Ha
             execution: None,
             command: None,
             unmatched: None,
+            proposal: None,
+            memory_seed: String::new(),
             reply,
         };
     }
@@ -208,6 +302,8 @@ async fn read(deps: &HandlingDeps, request: &ResolveRequest, run: TurnRun) -> Ha
             execution: None,
             command: None,
             unmatched: None,
+            proposal: None,
+            memory_seed: String::new(),
             reply: unreadable_reply(&rendered.unreadable),
         };
     }
@@ -229,8 +325,25 @@ async fn read(deps: &HandlingDeps, request: &ResolveRequest, run: TurnRun) -> Ha
         execution,
         command: Some(rendered.command),
         unmatched: None,
+        proposal: None,
+        memory_seed: String::new(),
         reply,
     }
+}
+
+/// Build the reply of a turn the model wrote a script for.
+///
+/// The daemon runs no script of its own accord, so the reply carries the
+/// script for the user to read and to approve. The message names the
+/// summary of the model when the model wrote one.
+fn script_reply(proposal: &ScriptProposal) -> String {
+    let summary = proposal.summary.trim();
+    let head = if summary.is_empty() {
+        "I can do that with this script:".to_string()
+    } else {
+        format!("{summary} I can do that with this script:")
+    };
+    format!("{head}\n```sh\n{}\n```", proposal.script.trim())
 }
 
 /// Build the reply that asks the user for the values the intent needs.
@@ -288,13 +401,28 @@ async fn resolve_intent(
     let publishes = run.publishes();
     let result = deps
         .resolver
-        .resolve(request, |delta| {
-            if publishes {
-                events.publish(SystemEventPayloadDto::IntentThinking {
-                    delta: delta.to_string(),
-                });
-            }
-        })
+        .resolve(
+            request,
+            |delta| {
+                if publishes {
+                    events.publish(SystemEventPayloadDto::IntentThinking {
+                        delta: delta.to_string(),
+                    });
+                }
+            },
+            // The stage of the turn, named as it starts, so the surface
+            // reads the step the daemon is on instead of one label for
+            // the whole read. A stage that reads a model takes seconds,
+            // so this is what tells a reader that the turn moves.
+            &mut |stage, detail| {
+                if publishes {
+                    events.publish(SystemEventPayloadDto::IntentStage {
+                        stage: stage.to_string(),
+                        detail: detail.to_string(),
+                    });
+                }
+            },
+        )
         .await;
 
     match result {
@@ -313,17 +441,23 @@ async fn resolve_intent(
             engine,
             model,
             route,
+            reply,
+            proposal,
         }) => {
             if publishes {
                 events.publish(SystemEventPayloadDto::IntentNotFound {
                     text: request.text.clone(),
                 });
             }
-            Err(ResolveReply::unmatched(UnmatchedRead {
-                engine,
-                model,
-                route,
-            }))
+            Err(ResolveReply::unmatched(
+                UnmatchedRead {
+                    engine,
+                    model,
+                    route,
+                },
+                reply,
+                proposal,
+            ))
         }
         // An empty catalog is a message no engine read, so the turn has
         // nothing to report about how it was read.

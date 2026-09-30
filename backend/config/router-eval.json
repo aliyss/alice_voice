@@ -76,6 +76,7 @@
 
     { "$comment": "A message whose entity value matches no phrase of the catalog is the common case: only the intent words carry it.", "message": "what is the weather in Porto", "intent": "get weather" },
     { "message": "what is the weather in Lisbon", "intent": "get weather" },
+    { "message": "weather in zurich", "intent": "get weather" },
     { "message": "search for nix flakes", "intent": "search web" },
     { "message": "open example.com", "intent": "open website" },
     { "message": "go to workspace 7", "intent": "switch workspace" },

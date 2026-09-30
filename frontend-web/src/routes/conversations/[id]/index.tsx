@@ -20,7 +20,8 @@ import { ChatPage } from '~/components/pages/chat-page';
 
 import { backendGet } from '~/lib/backend-client';
 
-import { sendMessage } from '~/api/chat';
+import { getConversation, sendMessage } from '~/api/chat';
+import { approveScript, denyScript, getScript } from '~/api/scripts';
 
 /** Read one conversation with its full message history. */
 export const useConversation = routeLoader$(
@@ -40,12 +41,20 @@ export const useConversation = routeLoader$(
 export default component$(() => {
   const conversation = useConversation();
   const handleSend = $((input: SendMessageInput) => sendMessage(input));
+  const handleReadScript = $((id: string) => getScript(id));
+  const handleApproveScript = $((id: string) => approveScript(id));
+  const handleDenyScript = $((id: string) => denyScript(id));
+  const handleReloadConversation = $((id: string) => getConversation(id));
 
   return (
     <ChatPage
       conversation={conversation.value.conversation}
       messages={conversation.value.messages}
       onSend$={handleSend}
+      onReadScript$={handleReadScript}
+      onApproveScript$={handleApproveScript}
+      onDenyScript$={handleDenyScript}
+      onReloadConversation$={handleReloadConversation}
     />
   );
 });

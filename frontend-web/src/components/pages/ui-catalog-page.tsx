@@ -23,6 +23,7 @@ import { SurfacesSection } from '~/components/sections/ui/surfaces-section';
 import { SwitcherSection } from '~/components/sections/ui/switcher-section';
 import { TabsSection } from '~/components/sections/ui/tabs-section';
 import { TextSection } from '~/components/sections/ui/text-section';
+import { ToggleSection } from '~/components/sections/ui/toggle-section';
 import { TokensSection } from '~/components/sections/ui/tokens-section';
 import { PageHeader } from '~/components/ui/page-header';
 import { ScrollArea } from '~/components/ui/scroll-area';
@@ -47,6 +48,7 @@ export const UiCatalogPage = component$(() => {
         <NavSection />
         <TabsSection />
         <SwitcherSection />
+        <ToggleSection />
         <PanelSection />
         <FlowSection />
         <AuraSection />

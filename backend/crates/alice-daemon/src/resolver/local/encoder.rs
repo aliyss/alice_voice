@@ -17,13 +17,13 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use alice_core::config::LocalDevice;
-use ort::execution_providers::CUDAExecutionProvider;
+use ort::execution_providers::{CUDAExecutionProvider, OpenVINOExecutionProvider};
 use ort::session::Session;
 use ort::session::SessionInputValue;
 use ort::value::{DynValue, Tensor};
 use tokenizers::{Encoding, Tokenizer, TruncationParams};
 
-use crate::resolver::device::{self, DEVICE_CUDA};
+use crate::resolver::device::{self, DEVICE_CUDA, DEVICE_GPU};
 use crate::resolver::local::catalog::{ModelSpec, Role};
 use crate::resolver::local::error::LocalError;
 use crate::resolver::local::store::LocalStore;
@@ -96,6 +96,15 @@ impl LocalEngine {
         }
     }
 
+    /// The store that holds the built in models.
+    ///
+    /// The decision model of the router is a built in model of the same
+    /// directory, so its engine borrows this store rather than opening a
+    /// second one over the same files.
+    pub fn store(&self) -> Arc<LocalStore> {
+        Arc::clone(&self.store)
+    }
+
     /// Turn each text into one unit vector.
     ///
     /// This blocks on the model, so the caller runs it on the blocking
@@ -114,7 +123,15 @@ impl LocalEngine {
         let encodings = encode(&reader.tokenizer, None, texts)?;
         let batch = Batch::read(&rows_of(&encodings), pad_id(&reader.tokenizer));
         let hidden = self.run(&reader, &batch)?;
-        Ok(pool(&hidden, &batch.mask))
+        Ok(pool(&hidden))
+    }
+
+    /// Load one model onto one device, so the first turn of the daemon does
+    /// not pay for the load.
+    pub fn warm(&self, id: &str, device: LocalDevice) -> Result<(), LocalError> {
+        let spec = self.store.installed_spec(id, Role::Embedding)?;
+        self.reader(spec, device)?;
+        Ok(())
     }
 
     /// Score how well one message fits each candidate.
@@ -223,6 +240,10 @@ impl LocalEngine {
         if device == DEVICE_CUDA {
             builder = builder
                 .with_execution_providers([CUDAExecutionProvider::default().build()])
+                .map_err(|err| LocalError::Load(err.to_string()))?;
+        } else if device == DEVICE_GPU {
+            builder = builder
+                .with_execution_providers([OpenVINOExecutionProvider::default().build()])
                 .map_err(|err| LocalError::Load(err.to_string()))?;
         }
         let session = builder
@@ -410,12 +431,15 @@ fn sigmoid(logit: f32) -> f32 {
     1.0 / (1.0 + (-logit).exp())
 }
 
-/// Fold the tokens of every row into one unit vector per row.
+/// Read the meaning of every row out of the state of its first token.
 ///
-/// A token the mask does not mark is padding and stays out of the
-/// average, so a short text of a batch reads the same vector as it would
-/// alone.
-fn pool(read: &Read, mask: &[i64]) -> Vec<Vec<f32>> {
+/// A BGE sentence encoder puts the meaning of a text in the state of the
+/// `[CLS]` token that opens it, not in the average of every token. The
+/// average is quiet about it: it still reads a unit vector, so the stage
+/// does not fail, it only compares weaker vectors. The messages the
+/// catalog answers then score a little lower and a few of them fall under
+/// the floor.
+fn pool(read: &Read) -> Vec<Vec<f32>> {
     let Some(&rows) = read.shape.first() else {
         return Vec::new();
     };
@@ -423,27 +447,17 @@ fn pool(read: &Read, mask: &[i64]) -> Vec<Vec<f32>> {
     let Some(&width) = read.shape.get(2) else {
         return Vec::new();
     };
+    if tokens == 0 {
+        return Vec::new();
+    }
 
     let mut vectors = Vec::with_capacity(rows);
     for row in 0..rows {
-        let mut sums = vec![0.0_f32; width];
-        let mut counted = 0.0_f32;
-        for token in 0..tokens {
-            if mask.get(row * tokens + token).copied().unwrap_or(1) == 0 {
-                continue;
-            }
-            counted += 1.0;
-            let start = (row * tokens + token) * width;
-            for (position, sum) in sums.iter_mut().enumerate() {
-                *sum += read.data.get(start + position).copied().unwrap_or(0.0);
-            }
-        }
-        if counted > 0.0 {
-            for sum in &mut sums {
-                *sum /= counted;
-            }
-        }
-        vectors.push(crate::resolver::router::embed::unit(sums));
+        let start = row * tokens * width;
+        let cls: Vec<f32> = (0..width)
+            .map(|position| read.data.get(start + position).copied().unwrap_or(0.0))
+            .collect();
+        vectors.push(crate::resolver::router::embed::unit(cls));
     }
     vectors
 }
@@ -468,47 +482,44 @@ mod tests {
     }
 
     #[test]
-    fn the_pool_of_a_row_ignores_the_tokens_it_is_not_told_about() {
-        // Two rows of three tokens with two numbers each. The second token
-        // of the first row is padding and stays out of the average, so the
-        // row reads the same vector as a text of the two real tokens.
+    fn the_pool_of_a_row_reads_the_state_of_its_first_token() {
+        // Two rows of three tokens with two numbers each. A BGE encoder
+        // puts the meaning of a row in its first token, so the row reads
+        // that token alone and the rest of the row changes nothing.
         let read = Read {
             shape: vec![2, 3, 2],
             data: vec![
                 2.0, 4.0, 100.0, 100.0, 4.0, 8.0, // first row
-                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, // second row
+                1.0, 1.0, 100.0, 100.0, 7.0, 9.0, // second row
             ],
         };
-        let mask = vec![1, 0, 1, 1, 1, 1];
 
-        let vectors = pool(&read, &mask); // The average of (2, 4) and (4, 8) is (3, 6), and (1, 1) with
-                                          // itself is (1, 1). Both read as one unit of length.
-        let three = 3.0_f32 / 45.0_f32.sqrt();
-        let six = 6.0_f32 / 45.0_f32.sqrt();
+        let vectors = pool(&read);
+        let one = 1.0_f32 / 5.0_f32.sqrt();
+        let two = 2.0_f32 / 5.0_f32.sqrt();
         let half = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((vectors[0][0] - three).abs() < 1e-5, "{:?}", vectors[0]);
-        assert!((vectors[0][1] - six).abs() < 1e-5, "{:?}", vectors[0]);
+        assert!((vectors[0][0] - one).abs() < 1e-5, "{:?}", vectors[0]);
+        assert!((vectors[0][1] - two).abs() < 1e-5, "{:?}", vectors[0]);
         assert!((vectors[1][0] - half).abs() < 1e-5, "{:?}", vectors[1]);
         assert!((vectors[1][1] - half).abs() < 1e-5, "{:?}", vectors[1]);
     }
 
     #[test]
     fn a_read_without_a_row_reads_no_vector() {
-        assert!(pool(
-            &Read {
-                shape: vec![],
-                data: vec![]
-            },
-            &[]
-        )
+        assert!(pool(&Read {
+            shape: vec![],
+            data: vec![]
+        })
         .is_empty());
-        assert!(pool(
-            &Read {
-                shape: vec![1, 2],
-                data: vec![1.0, 2.0]
-            },
-            &[1, 1]
-        )
+        assert!(pool(&Read {
+            shape: vec![1, 2],
+            data: vec![1.0, 2.0]
+        })
+        .is_empty());
+        assert!(pool(&Read {
+            shape: vec![1, 0, 2],
+            data: vec![]
+        })
         .is_empty());
     }
 

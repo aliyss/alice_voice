@@ -4,14 +4,17 @@
 pub mod conversations;
 pub mod dependencies;
 pub mod intents;
+pub mod librarian;
 pub mod openapi;
 pub mod reply;
 pub mod resolver;
 pub mod rest;
 pub mod routes;
+pub mod scripts;
 pub mod settings;
 pub mod socket;
 pub mod state;
+pub mod system;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -87,14 +87,18 @@ pub async fn chat_handler(
         chat::store_turn(
             &state.stores.conversations,
             &state.stores.queue,
+            &state.stores.pending_scripts,
             &deps,
-            text,
-            body.conversation_id,
+            chat::StoreTurnInput {
+                text,
+                conversation_id: body.conversation_id,
+                context: body.context.unwrap_or(true),
+            },
         )
         .await
         .map_err(map_store_error)?
     } else {
-        chat::build_ephemeral_turn(&deps, &text).await
+        chat::build_ephemeral_turn(&state.stores.pending_scripts, &deps, &text).await
     };
 
     // 3. Publish the reply event for the socket stream. The queued event

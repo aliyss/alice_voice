@@ -3,6 +3,7 @@
 //! The options arrive with every request, so the intent configuration of
 //! the user defines what the model may choose.
 
+pub mod answer;
 pub mod client;
 pub mod decision;
 pub mod device;

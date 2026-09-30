@@ -5,6 +5,8 @@
 //! publishes every stage of the turn on the event bus, so the interface
 //! shows the resolver and the command while the turn runs.
 
+use std::time::Instant;
+
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use uuid::Uuid;
@@ -16,6 +18,7 @@ use alice_core::dto::{
 
 use crate::conversation::{ConversationService, NewMessage};
 use crate::handling::{self, HandlingDeps, HandlingOutcome};
+use crate::pending_script::{NewPendingScript, PendingScriptService};
 use crate::queue::{NewQueuedMessage, QueueService};
 use crate::resolver::{ContextTurn, ResolveRequest, RouteReport};
 
@@ -46,6 +49,8 @@ struct TurnMeta {
     confidence: Option<f32>,
     /// How the daemon read and ran the turn, or null when it read nothing.
     meta: Option<MessageMetaDto>,
+    /// How long the daemon needed to read the turn, or null.
+    resolve_ms: Option<u64>,
 }
 
 impl TurnMeta {
@@ -68,7 +73,11 @@ impl TurnMeta {
                     command: None,
                     exit_code: None,
                     duration_ms: None,
+                    script_id: None,
+                    resolve_ms: None,
+                    memory_seed: seed_of(outcome),
                 }),
+                resolve_ms: None,
             };
         };
         Self {
@@ -89,9 +98,47 @@ impl TurnMeta {
                 command: outcome.command.clone(),
                 exit_code: outcome.execution.as_ref().map(|run| run.exit_code),
                 duration_ms: outcome.execution.as_ref().map(|run| run.duration_ms),
+                script_id: None,
+                resolve_ms: None,
+                memory_seed: seed_of(outcome),
             }),
+            resolve_ms: None,
         }
     }
+
+    /// Record how long the daemon needed to read the turn.
+    ///
+    /// The read runs from the queued message to the command, so the time
+    /// is written next to the command duration rather than over it: a
+    /// turn that read slowly and a turn whose command ran slowly are told
+    /// apart this way.
+    fn attach_resolve(&mut self, resolve_ms: u64) {
+        self.resolve_ms = Some(resolve_ms);
+        if let Some(meta) = self.meta.as_mut() {
+            meta.resolve_ms = Some(resolve_ms);
+        }
+    }
+
+    /// Put the identifier of a proposed script on the metadata.
+    ///
+    /// The daemon stores the script after the turn is read, so the
+    /// identifier joins the turn once the store answers.
+    fn attach_script(&mut self, script_id: String) {
+        if let Some(meta) = self.meta.as_mut() {
+            meta.script_id = Some(script_id);
+        }
+    }
+}
+
+/// Read what the daemon read from the long term memory for one turn.
+///
+/// The memory belongs to the branch that no intent matches, so a turn
+/// that ran an intent reports nothing. A store that holds nothing for the
+/// turn leaves the field null as well, because the seed is the facts the
+/// answer leaned on and not the fact that a memory exists.
+fn seed_of(outcome: &HandlingOutcome) -> Option<String> {
+    let seed = outcome.memory_seed.trim();
+    (!seed.is_empty()).then(|| seed.to_string())
 }
 
 /// Read how the layered router read one turn.
@@ -119,17 +166,38 @@ pub fn meta_of(outcome: &HandlingOutcome) -> Option<MessageMetaDto> {
     TurnMeta::from_outcome(outcome).meta
 }
 
+/// The input of one stored turn.
+///
+/// The text, the conversation, and the context switch travel as one value,
+/// so the store action reads one input rather than a row of separate
+/// arguments.
+#[derive(Clone, Debug)]
+pub struct StoreTurnInput {
+    /// The text the user sent.
+    pub text: String,
+    /// The conversation to append to. Null starts a new conversation.
+    pub conversation_id: Option<Uuid>,
+    /// Whether the resolver reads the earlier turns of the conversation as
+    /// the context of the message.
+    pub context: bool,
+}
+
 /// Store one chat turn and return the conversation, the user message, and the reply.
 ///
-/// The daemon creates the conversation when `conversation_id` is null. The
-/// title of a new conversation comes from `text`, its first message.
+/// The daemon creates the conversation when the input names none. The
+/// title of a new conversation comes from the text, its first message.
 pub async fn store_turn(
     conversations: &ConversationService,
     queue: &QueueService,
+    pending: &PendingScriptService,
     deps: &HandlingDeps,
-    text: String,
-    conversation_id: Option<Uuid>,
+    input: StoreTurnInput,
 ) -> Result<ChatReplyDto, StoreTurnError> {
+    let StoreTurnInput {
+        text,
+        conversation_id,
+        context,
+    } = input;
     let now = Utc::now();
 
     // 1. Resolve the conversation, or start one from this first message.
@@ -156,16 +224,34 @@ pub async fn store_turn(
         .publish(SystemEventPayloadDto::MessageQueued { id: message_id });
 
     // 3. Handle the message. The stages stream on the event bus.
-    let history = build_history(conversations, conversation.id, deps).await?;
+    let history = build_history(conversations, conversation.id, deps, context).await?;
+    let started = Instant::now();
+    // The message is stored before the turn is read, so the memory of the
+    // turn names the message the transcript shows.
     let outcome = handling::handle(
         deps,
         &ResolveRequest {
             text: text.clone(),
             history,
+            memory_seed: String::new(),
         },
+        Some(message_id),
     )
     .await;
-    let intent = TurnMeta::from_outcome(&outcome);
+    let resolve_ms = started.elapsed().as_millis() as u64;
+    log_turn(deps, &outcome, resolve_ms, context);
+    let mut intent = TurnMeta::from_outcome(&outcome);
+    intent.attach_resolve(resolve_ms);
+    store_proposal(
+        pending,
+        deps,
+        Some(conversation.id),
+        &text,
+        &outcome,
+        now,
+        &mut intent,
+    )
+    .await?;
     if let Some(execution) = &outcome.execution {
         tracing::debug!(
             exit_code = execution.exit_code,
@@ -210,21 +296,36 @@ pub async fn store_turn(
 /// Nothing is stored, so the messages carry no conversation. The daemon
 /// still resolves the intent and runs its command, because the queue
 /// toggle controls the store only.
-pub async fn build_ephemeral_turn(deps: &HandlingDeps, text: &str) -> ChatReplyDto {
+pub async fn build_ephemeral_turn(
+    pending: &PendingScriptService,
+    deps: &HandlingDeps,
+    text: &str,
+) -> ChatReplyDto {
     let now = Utc::now();
     let user_id = Uuid::new_v4();
     deps.events
         .publish(SystemEventPayloadDto::MessageQueued { id: user_id });
 
+    let started = Instant::now();
+    // The daemon stores no turn of a queue that is off, so the memory of
+    // this turn belongs to no message and the transcript marks none.
     let outcome = handling::handle(
         deps,
         &ResolveRequest {
             text: text.to_string(),
             history: Vec::new(),
+            memory_seed: String::new(),
         },
+        None,
     )
     .await;
-    let intent = TurnMeta::from_outcome(&outcome);
+    let resolve_ms = started.elapsed().as_millis() as u64;
+    log_turn(deps, &outcome, resolve_ms, false);
+    let mut intent = TurnMeta::from_outcome(&outcome);
+    intent.attach_resolve(resolve_ms);
+    // A turn the daemon does not store keeps its script in the store, so
+    // the user can still approve it. The record names no conversation.
+    let _ = store_proposal(pending, deps, None, text, &outcome, now, &mut intent).await;
 
     ChatReplyDto {
         stored: false,
@@ -240,14 +341,77 @@ pub async fn build_ephemeral_turn(deps: &HandlingDeps, text: &str) -> ChatReplyD
     }
 }
 
+/// Store the script the model wrote for one turn and report it to the user.
+///
+/// The daemon runs no script of its own accord, so the record waits for
+/// the decision of the user. The event carries the script, so the surface
+/// shows it the moment the turn ends, and the turn metadata carries the
+/// identifier, so the surface can read the script back after a restart.
+/// A turn without a script stores nothing.
+async fn store_proposal(
+    pending: &PendingScriptService,
+    deps: &HandlingDeps,
+    conversation_id: Option<Uuid>,
+    text: &str,
+    outcome: &HandlingOutcome,
+    at: DateTime<Utc>,
+    intent: &mut TurnMeta,
+) -> Result<(), sea_orm::DbErr> {
+    let Some(proposal) = &outcome.proposal else {
+        return Ok(());
+    };
+
+    let id = Uuid::new_v4();
+    pending
+        .store(&NewPendingScript {
+            id,
+            conversation_id,
+            request_text: text.to_string(),
+            summary: proposal.summary.clone(),
+            script: proposal.script.clone(),
+            destructiveness: proposal.destructiveness,
+            created_at: at,
+        })
+        .await?;
+    deps.events.publish(SystemEventPayloadDto::ScriptProposed {
+        id,
+        summary: proposal.summary.clone(),
+        script: proposal.script.clone(),
+        destructiveness: proposal.destructiveness,
+    });
+    intent.attach_script(id.to_string());
+    Ok(())
+}
+
+/// Report what one turn cost, so a slow turn is read from the log.
+///
+/// The read and the command are timed apart, and the context switch and
+/// the thinking flag are reported beside them: a turn that reads the
+/// earlier turns and a turn a reasoning model answers both cost more than
+/// the sentence alone suggests.
+fn log_turn(deps: &HandlingDeps, outcome: &HandlingOutcome, resolve_ms: u64, context: bool) {
+    tracing::info!(
+        resolve_ms,
+        context,
+        thinking = deps.config.resolver.thinking,
+        intent = outcome.intent.as_ref().map(|intent| intent.name.as_str()),
+        command_ms = outcome.execution.as_ref().map(|run| run.duration_ms),
+        "the daemon handled a turn"
+    );
+}
+
 /// Read the earlier turns of a conversation as the context of the resolver.
+///
+/// A turn the user asked to read without context reads none of them, so
+/// the resolver holds the message against the catalog alone.
 async fn build_history(
     conversations: &ConversationService,
     conversation_id: Uuid,
     deps: &HandlingDeps,
+    context: bool,
 ) -> Result<Vec<ContextTurn>, sea_orm::DbErr> {
     let limit = deps.config.resolver.context_turns;
-    if limit == 0 {
+    if !context || limit == 0 {
         return Ok(Vec::new());
     }
 
@@ -301,6 +465,9 @@ fn ephemeral_message(
         intent_name: intent.name.clone(),
         confidence: intent.confidence,
         meta: intent.meta.clone(),
+        // A turn the daemon does not store is never read back, so no reader
+        // fills the memory of it.
+        memory: None,
     }
 }
 
@@ -359,6 +526,8 @@ mod tests {
             execution: None,
             command: None,
             unmatched,
+            proposal: None,
+            memory_seed: String::new(),
             reply: "ok".to_string(),
         }
     }
@@ -491,6 +660,69 @@ mod tests {
     }
 
     #[test]
+    fn turn_meta_reports_how_long_the_read_took() {
+        let mut outcome = outcome(Some(resolved()), None);
+        outcome.command = Some("curl wttr.in/Berlin".to_string());
+        let mut intent = TurnMeta::from_outcome(&outcome);
+        intent.attach_resolve(820);
+
+        assert_eq!(intent.resolve_ms, Some(820));
+        assert_eq!(
+            intent
+                .meta
+                .expect("a matched turn carries metadata")
+                .resolve_ms,
+            Some(820)
+        );
+    }
+
+    #[test]
+    fn turn_meta_reports_what_the_memory_held_for_one_turn() {
+        let mut outcome = outcome(
+            None,
+            Some(UnmatchedRead {
+                engine: ResolverEngine::Gliner,
+                model: None,
+                route: crate::resolver::RouteReport::default(),
+            }),
+        );
+        outcome.memory_seed = "Concepts the daemon already remembers:\n- user".to_string();
+
+        let meta = TurnMeta::from_outcome(&outcome)
+            .meta
+            .expect("a turn without an intent carries metadata");
+        assert_eq!(
+            meta.memory_seed.as_deref(),
+            Some("Concepts the daemon already remembers:\n- user")
+        );
+    }
+
+    #[test]
+    fn turn_meta_reports_no_memory_for_a_turn_that_read_none() {
+        let outcome = outcome(
+            None,
+            Some(UnmatchedRead {
+                engine: ResolverEngine::Gliner,
+                model: None,
+                route: crate::resolver::RouteReport::default(),
+            }),
+        );
+
+        let meta = TurnMeta::from_outcome(&outcome)
+            .meta
+            .expect("a turn without an intent carries metadata");
+        assert!(meta.memory_seed.is_none());
+    }
+
+    #[test]
+    fn turn_meta_reads_no_time_before_one_is_measured() {
+        assert_eq!(
+            TurnMeta::from_outcome(&outcome(None, None)).resolve_ms,
+            None
+        );
+    }
+
+    #[test]
     fn turn_meta_stays_empty_when_nothing_read_the_message() {
         assert_eq!(
             TurnMeta::from_outcome(&outcome(None, None)),
@@ -505,6 +737,7 @@ mod tests {
             name: Some("get weather".to_string()),
             confidence: None,
             meta: None,
+            resolve_ms: None,
         };
         let message = ephemeral_message(
             Uuid::new_v4(),

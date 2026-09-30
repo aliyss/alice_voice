@@ -24,6 +24,7 @@ function message(overrides: Partial<ChatMessageDto> = {}): ChatMessageDto {
     intentName: null,
     confidence: null,
     meta: null,
+    memory: null,
     ...overrides,
   };
 }
@@ -174,6 +175,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -189,7 +193,9 @@ describe('toChatRow metadata', () => {
       command: 'curl -s wttr.in/Berlin?format=3',
       exitCode: 'exit 0',
       exitFailed: false,
+      resolve: '820 ms',
       duration: '412 ms',
+      memorySeed: null,
     });
   });
 
@@ -211,6 +217,9 @@ describe('toChatRow metadata', () => {
           command: null,
           exitCode: null,
           durationMs: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -238,6 +247,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -263,6 +275,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -286,6 +301,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -309,6 +327,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -332,6 +353,9 @@ describe('toChatRow metadata', () => {
           stage: null,
           candidates: [],
           route: null,
+          scriptId: null,
+          memorySeed: null,
+          resolveMs: 820,
         },
       }),
     );
@@ -343,6 +367,50 @@ describe('toChatRow metadata', () => {
 
   it('reports no metadata for a turn that read nothing', () => {
     expect(toChatRow(message()).meta).toBeNull();
+  });
+
+  it('reads the memory the daemon read before it answered', () => {
+    const row = toChatRow(
+      message({
+        meta: {
+          intentEngine: 'gliner',
+          intentModel: null,
+          valueEngine: null,
+          valueModel: null,
+          entities: [],
+          command: null,
+          exitCode: null,
+          durationMs: null,
+          stage: null,
+          candidates: [],
+          route: null,
+          scriptId: null,
+          memorySeed: 'Concepts the daemon already remembers:\n- Flurin',
+          resolveMs: 12,
+        },
+      }),
+    );
+
+    expect(row.meta?.memorySeed).toBe(
+      'Concepts the daemon already remembers:\n- Flurin',
+    );
+  });
+
+  it('reads the facts the memory learned from the turn', () => {
+    const row = toChatRow(
+      message({
+        memory: {
+          facts: [{ concept: 'Flurin', relation: 'lives_in', value: 'Zurich' }],
+        },
+      }),
+    );
+
+    expect(row.memory?.facts).toEqual(['Flurin · lives_in = Zurich']);
+  });
+
+  it('marks no turn the memory has not read', () => {
+    expect(toChatRow(message()).memory).toBeNull();
+    expect(toChatRow(message({ memory: { facts: [] } })).memory).toBeNull();
   });
 });
 

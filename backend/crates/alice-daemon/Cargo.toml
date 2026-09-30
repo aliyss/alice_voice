@@ -10,6 +10,14 @@ default = []
 # build downloads a CUDA build of ONNX Runtime, so the machine needs the
 # CUDA runtime libraries on its library path. `shell.nix` provides them.
 gliner-cuda = ["gliner/cuda"]
+# Run the built in models on an Intel GPU/NPU via OpenVINO. The build
+# needs a system ONNX Runtime that ships the OpenVINO provider, which
+# `shell.nix --arg gpu true` (or `--arg openvino true`) provides.
+gliner-openvino = ["gliner/openvino"]
+# Portable GPU acceleration: on Intel it is OpenVINO (Arc iGPU/NPU),
+# on NVIDIA use `gliner-cuda` instead. `gpu` is what `nix-shell --arg gpu
+# true` and `cargo --features gpu` use on this laptop (Meteor Lake).
+gpu = ["gliner/openvino"]
 # Load ONNX Runtime from ORT_DYLIB_PATH at run time instead of linking it
 # at build time. Useful when a system provides its own ONNX Runtime.
 gliner-load-dynamic = ["gliner/load-dynamic"]
@@ -32,6 +40,7 @@ reqwest = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sysinfo = { workspace = true }
 # The tokenizer of the built in models of the router. The built in GLiNER
 # models bring their own reader, so this is the only direct use.
 tokenizers = "0.21"

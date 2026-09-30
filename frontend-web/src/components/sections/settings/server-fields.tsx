@@ -43,6 +43,14 @@ export interface ServerFieldsProps {
   /** Draw the chat model. It is on by default. */
   showModel?: boolean;
   /**
+   * Draw the address. It is on by default.
+   *
+   * The address belongs to the place and the models belong to the readers
+   * that run there, so a panel of one reader turns this off and names the
+   * address in its hint instead of writing the same setting twice.
+   */
+  showBaseUrl?: boolean;
+  /**
    * The label budget of the catalog, or null. A model that names one intent
    * per letter reads fewer intents than the catalog holds, so the warning
    * belongs to the configuration of the server that answers.
@@ -57,33 +65,39 @@ export interface ServerFieldsProps {
 export const ServerFields = component$<ServerFieldsProps>((props) => {
   return (
     <Stack gap="md">
-      <Stack gap="xs">
-        <FieldLabel
-          label="Server address"
-          hint="The address is a database setting, so it stays editable while the server is down. The model below follows the server."
-        />
-        <TextInput
-          kind="input"
-          surface="field"
-          name="resolverBaseUrl"
-          ariaLabel="Address of the llama.cpp server"
-          placeholder="http://127.0.0.1:8012/v1"
-          value={props.baseUrl}
-          disabled={props.pending || !props.canStore}
-          onInput$={$((event: Event) => {
-            props.onBaseUrl$((event.target as HTMLInputElement).value);
-          })}
-        />
-      </Stack>
+      {props.showBaseUrl === false ? null : (
+        <Stack gap="xs">
+          <FieldLabel
+            label="Server address"
+            hint="The address is a database setting, so it stays editable while the server is down. The model below follows the server."
+          />
+          <TextInput
+            kind="input"
+            surface="field"
+            name="resolverBaseUrl"
+            ariaLabel="Address of the llama.cpp server"
+            placeholder="http://127.0.0.1:8012/v1"
+            value={props.baseUrl}
+            disabled={props.pending || !props.canStore}
+            onInput$={$((event: Event) => {
+              props.onBaseUrl$((event.target as HTMLInputElement).value);
+            })}
+          />
+        </Stack>
+      )}
 
       {props.showModel === false ? null : (
         <Stack gap="xs">
           <FieldLabel
             label="Model"
             hint={
-              props.canStore && props.llamaReachable && props.resolvedBaseUrl
-                ? `The list comes from ${props.resolvedBaseUrl}/models, so the name is one the server really answers to.`
-                : 'The model the server names the intent with. It has to answer to the name exactly.'
+              props.showBaseUrl === false
+                ? `The model this reader runs at ${props.baseUrl}. The list comes from ${props.resolvedBaseUrl ?? props.baseUrl}/models, so the name is one the server really answers to.`
+                : props.canStore &&
+                    props.llamaReachable &&
+                    props.resolvedBaseUrl
+                  ? `The list comes from ${props.resolvedBaseUrl}/models, so the name is one the server really answers to.`
+                  : 'The model the server names the intent with. It has to answer to the name exactly.'
             }
           />
           {props.canStore &&

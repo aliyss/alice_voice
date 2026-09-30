@@ -347,7 +347,10 @@ export const OperationItem = component$<OperationItemProps>((props) => {
                     const firstMedia = Object.values(res.content ?? {})[0] as
                       | { schema?: { $ref?: string; type?: unknown } }
                       | undefined;
-                    const ex = firstMedia && firstMedia.schema ? exampleFor(firstMedia.schema) : null;
+                    const ex =
+                      firstMedia && firstMedia.schema
+                        ? exampleFor(firstMedia.schema)
+                        : null;
                     return (
                       <Box
                         key={code}

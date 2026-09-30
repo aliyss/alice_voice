@@ -8,8 +8,10 @@ import type {
   ChatMessageDto,
   ChatRoleDto,
   EntitySourceDto,
+  MemorySavedFactDto,
   MessageCandidateDto,
   MessageEntityDto,
+  MessageMemoryDto,
   MessageMetaDto,
   MessageRouteStepDto,
   ResolverEngineDto,
@@ -70,8 +72,27 @@ export interface ChatRowMeta {
   exitCode: string | null;
   /** True when the command ran and reported a failure. */
   exitFailed: boolean;
+  /**
+   * How long the daemon needed to read the turn, for example `1.2 s`, or
+   * null when it did not measure the read.
+   */
+  resolve: string | null;
   /** How long the command ran, for example `412 ms`, or null. */
   duration: string | null;
+  /**
+   * The concepts the daemon read from the long term memory before it
+   * answered the turn, as plain text, or null when it read none.
+   */
+  memorySeed: string | null;
+}
+
+/** What the memory learned from one turn, ready to render. */
+export interface ChatRowMemory {
+  /**
+   * The facts the turn taught, one line each, for example
+   * `Flurin · lives_in = Zurich`.
+   */
+  facts: string[];
 }
 
 /** One rendered turn of the chat transcript. */
@@ -92,6 +113,15 @@ export interface ChatRow {
   confidence: string | null;
   /** How the daemon read and ran the turn, or null when it read nothing. */
   meta: ChatRowMeta | null;
+  /**
+   * The metadata of the turn as the daemon stored it, or null.
+   *
+   * The debug reading of the route names every field of the report, so the
+   * row keeps the report itself and not only the words made of it.
+   */
+  source: MessageMetaDto | null;
+  /** What the memory learned from the turn, or null when it learned none. */
+  memory: ChatRowMemory | null;
 }
 
 /** The user language name of each resolver engine. */
@@ -117,6 +147,24 @@ const STEP_LABELS: Record<MessageRouteStepDto['stage'], string> = {
   extract: 'extraction',
 };
 
+/**
+ * The user language name of one step of the turn that runs right now.
+ *
+ * The live turn names the steps of the pipeline as they start, and two of
+ * them belong to the branch that no intent reaches rather than to the
+ * route of a matched turn, so the map carries those two as well.
+ */
+const LIVE_STEP_LABELS: Record<string, string> = {
+  ...STEP_LABELS,
+  answer: 'answer of the model',
+  script: 'script of the model',
+};
+
+/** The label of one step of a running turn, as the live card shows it. */
+export function formatLiveStep(stage: string): string {
+  return LIVE_STEP_LABELS[stage] ?? stage;
+}
+
 /** How one stage ended, in words. */
 const OUTCOME_LABELS: Record<MessageRouteStepDto['outcome'], string> = {
   matched: 'answered the turn',
@@ -134,6 +182,7 @@ const SOURCE_LABELS: Record<EntitySourceDto, string> = {
   spans: 'spans',
   model: 'model',
   lists: 'lists',
+  choice: 'choice',
 };
 
 /**
@@ -244,7 +293,9 @@ export function toRowMeta(meta: MessageMetaDto | null): ChatRowMeta | null {
     command: meta.command,
     exitCode: meta.exitCode === null ? null : `exit ${meta.exitCode}`,
     exitFailed: meta.exitCode !== null && meta.exitCode !== 0,
+    resolve: meta.resolveMs === null ? null : formatDuration(meta.resolveMs),
     duration: meta.durationMs === null ? null : formatDuration(meta.durationMs),
+    memorySeed: meta.memorySeed,
   };
 }
 
@@ -273,6 +324,24 @@ export function formatConfidence(value: number | null): string | null {
   return `${Math.round(value * 100)}%`;
 }
 
+/** Read one fact the memory learned as one line, for example `user · uses = Nix`. */
+export function formatMemoryFact(fact: MemorySavedFactDto): string {
+  return `${fact.concept} · ${fact.relation} = ${fact.value}`;
+}
+
+/**
+ * Read what one turn taught the memory, or null.
+ *
+ * A turn the memory has not read yet carries nothing, so the row shows no
+ * mark: the mark is a claim about the memory and only the memory knows it.
+ */
+function toRowMemory(memory: MessageMemoryDto | null): ChatRowMemory | null {
+  if (!memory || memory.facts.length === 0) {
+    return null;
+  }
+  return { facts: memory.facts.map(formatMemoryFact) };
+}
+
 /** Map one message DTO to one transcript row. */
 export function toChatRow(message: ChatMessageDto): ChatRow {
   return {
@@ -284,6 +353,8 @@ export function toChatRow(message: ChatMessageDto): ChatRow {
     intentName: message.intentName,
     confidence: formatConfidence(message.confidence),
     meta: toRowMeta(message.meta),
+    source: message.meta,
+    memory: toRowMemory(message.memory),
   };
 }
 
@@ -303,6 +374,8 @@ export function toPendingRow(text: string, now: Date): ChatRow {
     intentName: null,
     confidence: null,
     meta: null,
+    source: null,
+    memory: null,
   };
 }
 

@@ -7,6 +7,13 @@
  *
  * The field takes the caret when the surface loads and again when the
  * answer of the daemon lands, so the next message needs no click.
+ *
+ * The toggle stands on the caption line of the panel, at the right edge
+ * and in line with `PROMPT`, and it decides whether the daemon reads the
+ * earlier turns of the conversation as the context of the message. A
+ * message read without context is held against the catalog alone, so a
+ * user who tests the speed of the resolver sends one without waiting for
+ * the turns before it.
  */
 import type { QRL } from '@builder.io/qwik';
 
@@ -18,6 +25,7 @@ import { Spinner } from '~/components/ui/spinner';
 import { Stack } from '~/components/ui/stack';
 import { Text } from '~/components/ui/text';
 import { TextInput } from '~/components/ui/text-input';
+import { ToggleSwitch } from '~/components/ui/toggle-switch';
 
 /** The largest height of the growing field, in pixels. */
 const MAX_FIELD_HEIGHT = 160;
@@ -26,13 +34,14 @@ const MAX_FIELD_HEIGHT = 160;
 export interface ChatComposerSectionProps {
   /** True while the daemon answers the last message. */
   pending: boolean;
-  /** Send one message. */
-  onSend$: QRL<(text: string) => Promise<void>>;
+  /** Send one message, with the context switch of the composer. */
+  onSend$: QRL<(text: string, context: boolean) => Promise<void>>;
 }
 
 export const ChatComposerSection = component$<ChatComposerSectionProps>(
   (props) => {
     const draft = useSignal('');
+    const context = useSignal(true);
 
     const handleInput$ = $((event: Event) => {
       const field = event.target as HTMLTextAreaElement;
@@ -47,7 +56,7 @@ export const ChatComposerSection = component$<ChatComposerSectionProps>(
         return;
       }
       draft.value = '';
-      await props.onSend$(text);
+      await props.onSend$(text, context.value);
     });
 
     const handleKeyDown$ = $((event: KeyboardEvent) => {
@@ -65,6 +74,18 @@ export const ChatComposerSection = component$<ChatComposerSectionProps>(
     // than the default of the panel.
     return (
       <Card label="Prompt" class="w-full shrink-0" bodyClass="p-3">
+        {/* The switch stands on the caption line, so the way a message is
+            read is in view before the message is written. */}
+        <ToggleSwitch
+          q:slot="header"
+          label="Context"
+          hint="Read the earlier turns of the conversation as the context of the message. Off holds the message against the catalog alone."
+          checked={context.value}
+          disabled={props.pending}
+          onChange$={$((next: boolean) => {
+            context.value = next;
+          })}
+        />
         <Stack gap="sm">
           <Stack direction="row" gap="sm" align="end">
             <TextInput
@@ -95,7 +116,7 @@ export const ChatComposerSection = component$<ChatComposerSectionProps>(
               )}
             </Button>
           </Stack>
-          <Text size="micro" tone="faint">
+          <Text size="micro" tone="faint" block class="text-right">
             Enter to send · Shift and Enter for a new line
           </Text>
         </Stack>

@@ -273,6 +273,11 @@ The list matcher reads from the same place (`router.list_match`), because it ask
   The floor and the margin still hold the ranking, so a message the catalog does not really answer is refused before a model reads it and the floor keeps one meaning across the engines.
   The reranker then orders the intents the ranking allowed, which is what a reader that sees the message and a candidate in one sequence does better than two separate vectors can.
   A model that is not on disk, or a device that cannot run it, falls back to the scores.
+- `laya` chooses among the short list with a built in decision model (`router.laya_model`).
+  The model is a non-autoregressive encoder: the message and the short list become one typed `choice` question, every option is scored in one forward pass, and the model answers with one option and a calibrated probability for each.
+  It scores the answers it is allowed to give instead of writing text, so the choice cannot drift from the short list and the probability needs no parsing.
+  The headline probability feeds the same confidence a reranked turn reports, and the floor and the margin still hold the ranking first, so a message the catalog does not really answer costs no forward pass.
+  A model that is not on disk, or a device that cannot run it, falls back to the scores.
 - `generative` sends only the short list to the language model as a lettered decision, with an option that states that none of them fits.
   The prompt stays small however large the catalog is, which is what removes the 26 intent ceiling.
   A model that does not answer falls back to the scores, so a server that is down costs accuracy rather than the turn.

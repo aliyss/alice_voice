@@ -1,10 +1,10 @@
 /**
  * `LocalModelsSection` installs the built in models of the router.
  *
- * The router reads vectors and, when its decision stage reranks, reads how
- * well a message fits a candidate. Both reads can come from the model
- * server instead, so this section shows only the roles the current
- * settings read.
+ * The router reads vectors and, when its decision stage reranks or asks the
+ * built in decision model, reads how well a message fits a candidate. Both
+ * reads can come from the model server instead, so this section shows only
+ * the roles the current settings read.
  *
  * A built in model is a file on disk and not a service, so every role
  * lists its models with the state of each file. The download runs in the
@@ -29,19 +29,21 @@ import { Text } from '~/components/ui/text';
 import { formatSize } from '~/utils/size';
 
 /** What one built in model of the router reads. */
-export type LocalModelRole = 'embeddings' | 'reranker';
+export type LocalModelRole = 'embeddings' | 'reranker' | 'decision';
 
 /** The devices the settings page offers, in the order it shows them. */
 const DEVICES: { value: LocalDevice; label: string }[] = [
   { value: 'auto', label: 'Auto' },
   { value: 'cpu', label: 'CPU' },
   { value: 'cuda', label: 'CUDA' },
+  { value: 'gpu', label: 'GPU' },
 ];
 
 /** The name of each role as the section shows it. */
 const ROLE_LABELS: Record<LocalModelRole, string> = {
   embeddings: 'Embedding model',
   reranker: 'Reranker',
+  decision: 'Decision model',
 };
 
 /** The sentence that explains what each role reads. */
@@ -50,12 +52,14 @@ const ROLE_NOTES: Record<LocalModelRole, string> = {
     'Turns a message and an intent into vectors, so `launch the browser` reaches `open application` although the two share no word.',
   reranker:
     'Reads a message and one candidate together and reports how well the two fit, which is surer than a score of two separate vectors.',
+  decision:
+    'Reads the message and the short list as one typed choice and answers with one intent and a probability for every option. It scores the permitted answers instead of writing text, so the choice cannot drift from the short list.',
 };
 
 /**
  * The sentence about the device of a built in model.
  *
- * A build without CUDA and a machine without a usable card read the same
+ * A build without GPU and a machine without a usable card read the same
  * way to the model, so the hint distinguishes the two before a reader
  * wonders why the graphics card does nothing.
  */
@@ -63,9 +67,17 @@ function deviceNote(props: LocalModelsSectionProps): string {
   if (props.devices.includes(props.device) || props.device === 'auto') {
     return `This build runs on ${props.devices.join(' and ')}. Auto picks the best one.`;
   }
-  return props.cudaBuild
-    ? 'No CUDA device is usable right now, so the model would run on the processor.'
-    : 'This build carries no CUDA support. Build the daemon with --features gliner-cuda to run on the graphics card.';
+  const wantsGpu = props.device === 'gpu';
+  const wantsCuda = props.device === 'cuda';
+  const hasGpu = props.devices.includes('gpu');
+  const hasCuda = props.devices.includes('cuda');
+  if ((wantsGpu && hasCuda) || (wantsCuda && hasGpu)) {
+    return `This build runs on ${props.devices.join(' and ')}. The other GPU device is available.`;
+  }
+  if (props.cudaBuild || hasGpu || hasCuda) {
+    return 'No GPU device is usable right now, so the model would run on the processor.';
+  }
+  return 'This build carries no GPU support. Build the daemon with --features gpu (Intel) or --features gliner-cuda (NVIDIA) to run on the graphics card.';
 }
 
 /** The props of `LocalModelsSection`. */

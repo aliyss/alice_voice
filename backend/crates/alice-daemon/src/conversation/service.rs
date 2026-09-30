@@ -127,6 +127,9 @@ impl ConversationService {
             intent_name: new_message.intent_name,
             confidence: new_message.confidence,
             meta: new_message.meta,
+            // The memory reads the turn after it is stored, so the write
+            // carries nothing and a reader fills the field.
+            memory: None,
         })
     }
 
@@ -185,6 +188,9 @@ fn message_to_dto(model: message::Model) -> ChatMessageDto {
         intent_name: None,
         confidence: model.confidence,
         meta: decode_meta(model.meta.as_deref()),
+        // The memory of a turn belongs to the store of the memory, so the
+        // caller that reads a conversation fills the field.
+        memory: None,
     }
 }
 

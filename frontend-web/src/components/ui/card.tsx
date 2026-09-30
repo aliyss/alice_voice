@@ -5,7 +5,9 @@
  * four corner ticks. The interface runs over a transparent backdrop, so
  * the panel never paints an opaque color.
  *
- * Use `label` for the HUD caption of the panel.
+ * Use `label` for the HUD caption of the panel. A control that decides what
+ * the body shows stands on the line of that caption through the `header`
+ * slot, so the setting is read with the name of what it changes.
  *
  * A panel can be one pick: `pickable` lays a press over the whole panel,
  * so a list of panels is a list of choices and a reader picks a row by
@@ -93,10 +95,11 @@ export const Card = component$<CardProps>((props) => {
           ))}
 
       {props.label ? (
-        <div class="border-b border-ds-line px-6 py-2">
+        <div class="flex items-center justify-between gap-3 border-b border-ds-line px-6 py-2">
           <Text size="micro" tone="faint">
             {props.label}
           </Text>
+          <Slot name="header" />
         </div>
       ) : null}
 

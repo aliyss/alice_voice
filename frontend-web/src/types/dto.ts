@@ -53,6 +53,16 @@ export type SystemEventPayloadDto =
   | { type: 'TranscriptCorrected'; original: string; corrected: string }
   | { type: 'IntentThinking'; delta: string }
   | {
+      type: 'IntentStage';
+      /**
+       * The stage: `fast_path`, `retrieve`, `decide`, `extract`, `answer`,
+       * or `script`.
+       */
+      stage: string;
+      /** One sentence about what the stage is doing. */
+      detail: string;
+    }
+  | {
       type: 'IntentResolved';
       intent: string;
       confidence: number | null;
@@ -82,7 +92,21 @@ export type SystemEventPayloadDto =
     }
   | { type: 'ExecutionFailed'; intent: string; error: string }
   | { type: 'MessageQueued'; id: string }
-  | { type: 'MessageReplied'; id: string };
+  | { type: 'MessageReplied'; id: string }
+  | {
+      type: 'ScriptProposed';
+      id: string;
+      summary: string;
+      script: string;
+      destructiveness: number;
+    }
+  | { type: 'ScriptApproved'; id: string }
+  | { type: 'ScriptDenied'; id: string }
+  | {
+      type: 'MemorySaved';
+      message_id: string;
+      facts: MemorySavedFactDto[];
+    };
 
 /** The speaker of one chat message. */
 export type ChatRoleDto = 'user' | 'assistant';
@@ -107,6 +131,29 @@ export interface ChatMessageDto {
   confidence: number | null;
   /** How the daemon read the turn, or null when it read nothing. */
   meta: MessageMetaDto | null;
+  /**
+   * What the turn taught the long term memory, or null when the memory
+   * learned nothing from it. The memory reads a turn after the daemon
+   * answered it, so the field is filled when a reader reads the message
+   * back rather than when the turn is stored.
+   */
+  memory: MessageMemoryDto | null;
+}
+
+/** What one turn taught the long term memory. */
+export interface MessageMemoryDto {
+  /** The facts the turn taught, in the order the memory wrote them. */
+  facts: MemorySavedFactDto[];
+}
+
+/** One fact that one turn taught the long term memory. */
+export interface MemorySavedFactDto {
+  /** The name of the concept the fact belongs to. */
+  concept: string;
+  /** The relation the fact names. */
+  relation: string;
+  /** The value the fact carries. */
+  value: string;
 }
 
 /** One engine that read a part of a handled turn. */
@@ -133,7 +180,8 @@ export type EntitySourceDto =
   | 'embedding'
   | 'spans'
   | 'model'
-  | 'lists';
+  | 'lists'
+  | 'choice';
 
 /** One entity of an intent with the value the resolver read for it. */
 export interface MessageEntityDto {
@@ -229,6 +277,25 @@ export interface MessageMetaDto {
   exitCode: number | null;
   /** How long the command ran, in milliseconds, or null when none ran. */
   durationMs: number | null;
+  /**
+   * The identifier of the script the model wrote for this turn, or null
+   * when the model answered in words. The store keeps the script, so a
+   * user can still decide about a turn that a restart left behind.
+   */
+  scriptId: string | null;
+  /**
+   * How long the daemon needed to read the turn, in milliseconds, or null
+   * when it did not measure the read. The read runs from the queued
+   * message to the command, so it is told apart from `durationMs`.
+   */
+  resolveMs: number | null;
+  /**
+   * The concepts the daemon read from the long term memory for the turn,
+   * as plain text, or null when the memory carried none. The memory
+   * belongs to the branch that no intent matches, so only a turn without
+   * an intent reports what the daemon read of it.
+   */
+  memorySeed: string | null;
 }
 
 /** Body of `POST /api/v1/resolver/preview`. */
@@ -413,8 +480,13 @@ export type ResolverBackend = 'llama' | 'gliner' | 'hybrid' | 'router';
 /** The device a built in model runs on. */
 export type GlinerDevice = 'auto' | 'cpu' | 'cuda';
 
-/** The device a built in model of the router runs on. */
-export type LocalDevice = GlinerDevice;
+/**
+ * The device a built in model of the router runs on.
+ *
+ * The router may read a built in model on an OpenVINO device, so `gpu`
+ * belongs to this list even though the GLiNER model does not offer it.
+ */
+export type LocalDevice = 'auto' | 'cpu' | 'cuda' | 'gpu';
 
 /** Where the router reads the vectors of the catalog. */
 export type EmbedSource = 'server' | 'local';
@@ -423,13 +495,33 @@ export type EmbedSource = 'server' | 'local';
 export type RetrieveEngine = 'lexical' | 'dense' | 'hybrid';
 
 /** How the decision stage of the router chooses one of the short list. */
-export type DecideEngine = 'score' | 'rerank' | 'generative';
+export type DecideEngine = 'score' | 'rerank' | 'generative' | 'laya';
 
 /** How the extraction stage of the router reads the entity values. */
-export type ExtractEngine = 'lists' | 'spans' | 'generative';
+export type ExtractEngine = 'lists' | 'spans' | 'laya' | 'generative';
 
 /** How a mention is read against the values of an entity. */
 export type ListMatch = 'lexical' | 'dense' | 'both';
+
+/** One shell script that waits for the decision of the user. */
+export interface ScriptDto {
+  /** The stable identifier of the script. */
+  id: string;
+  /** The conversation of the turn, or null when the queue is off. */
+  conversationId: string | null;
+  /** The message the model wrote the script for. */
+  requestText: string;
+  /** One sentence about what the script does. */
+  summary: string;
+  /** The shell script. */
+  script: string;
+  /** How rough the script is on the machine, between 0 and 100. */
+  destructiveness: number;
+  /** The decision of the user: pending, approved, denied, or ran. */
+  status: string;
+  /** The time the daemon stored the script, in ISO 8601 format. */
+  createdAt: string;
+}
 
 /** The reply of `GET /api/v1/settings` and `PUT /api/v1/settings`. */
 export interface SettingsDto {
@@ -475,6 +567,8 @@ export interface SettingsDto {
   routerEmbedLocalModel: string;
   /** The identifier of the built in reranker. */
   routerRerankModel: string;
+  /** The identifier of the built in decision model. */
+  routerLayaModel: string;
   /** The device a built in model of the router runs on. */
   routerLocalDevice: LocalDevice;
   /** Whether a phrase counts only when the message shares its action. */
@@ -483,12 +577,35 @@ export interface SettingsDto {
   routerListMatch: ListMatch;
   /** The smallest cosine similarity an embedding match of a value needs. */
   routerListFloor: number;
+  /** Whether the language model answers a message no intent matched. */
+  routerFallbackLlm: boolean;
+  /**
+   * Whether the language model may write a shell script for a message no
+   * intent matched. The daemon runs no script without the approval of the
+   * user, whatever this value holds.
+   */
+  routerScriptFallback: boolean;
+  /**
+   * Whether the language model reads an open value the built in reader
+   * found none of. Off reads no such value and asks the user for it.
+   */
+  routerOpenValuesLlm: boolean;
+  /** Response quality between 0 and 100. 0 is fastest, 100 is best. */
+  responseQuality: number;
+  /** Response speed between 0 and 100. Always 100 - quality. */
+  responseSpeed: number;
   /**
    * The sentences the settings page tries against the resolver. They are
    * the tests of a pipeline, so the daemon keeps them beside the settings
    * even though a turn never reads them.
    */
   previewSentences: string[];
+  /** Whether the librarian keeps a long term memory. */
+  librarianEnabled: boolean;
+  /** The base URL of the model server the librarian reads. */
+  librarianBaseUrl: string;
+  /** The model the librarian reads. */
+  librarianModel: string;
 }
 
 /** The body of `PUT /api/v1/settings`. A null field keeps the stored value. */
@@ -535,6 +652,8 @@ export interface SettingsUpdateDto {
   routerEmbedLocalModel?: string;
   /** The identifier of the built in reranker. */
   routerRerankModel?: string;
+  /** The identifier of the built in decision model. */
+  routerLayaModel?: string;
   /** The device a built in model of the router runs on. */
   routerLocalDevice?: LocalDevice;
   /** Whether a phrase counts only when the message shares its action. */
@@ -543,8 +662,142 @@ export interface SettingsUpdateDto {
   routerListMatch?: ListMatch;
   /** The smallest cosine similarity an embedding match of a value needs. */
   routerListFloor?: number;
+  /** Whether the language model answers a message no intent matched. */
+  routerFallbackLlm?: boolean;
+  /** Whether the language model may write a shell script for a message. */
+  routerScriptFallback?: boolean;
+  /** Whether the language model reads an open value no reader else read. */
+  routerOpenValuesLlm?: boolean;
+  /** Response quality between 0 and 100. */
+  responseQuality?: number;
+  /** Response speed between 0 and 100. */
+  responseSpeed?: number;
   /** The sentences the settings page tries against the resolver. */
   previewSentences?: string[];
+  /** Whether the librarian keeps a long term memory. */
+  librarianEnabled?: boolean;
+  /** The base URL of the model server the librarian reads. */
+  librarianBaseUrl?: string;
+  /** The model the librarian reads. */
+  librarianModel?: string;
+}
+
+/** The state of the librarian as the settings page sees it. */
+export interface LibrarianStatusDto {
+  /** Whether the daemon keeps a memory at all. */
+  enabled: boolean;
+  /** The address of the model server the librarian reads. */
+  baseUrl: string;
+  /** The model the librarian reads. */
+  model: string;
+  /** Whether the model server answers. */
+  reachable: boolean;
+  /** Why the server does not answer, or null. */
+  detail: string | null;
+  /** Number of stored memory nodes. */
+  nodes: number;
+  /** Number of stored memory edges, closed edges included. */
+  edges: number;
+  /** Number of stored edges that are true now. */
+  currentEdges: number;
+  /** Number of stored edges a later turn taught again. */
+  confirmedEdges: number;
+  /** Number of episodes the worker has not read yet. */
+  pendingEpisodes: number;
+  /** Number of episodes the worker read. */
+  ingestedEpisodes: number;
+}
+
+/** One dated relation of one memory node. */
+export interface MemoryFactDto {
+  /** The stable identifier of the fact. */
+  id: string;
+  /** The relation the fact names, for example `lives_in`. */
+  relation: string;
+  /** The value the fact carries. */
+  value: string;
+  /** Whether the fact is true now. */
+  current: boolean;
+  /** How sure the reader was of the fact, from zero to one. */
+  confidence: number;
+  /** How much the fact is worth, from zero to one. */
+  importance: number;
+  /** Number of later turns that taught the same fact again. */
+  confirmations: number;
+  /** The time the memory last saw the fact, in ISO 8601 format. */
+  lastConfirmedAt: string;
+  /** The time the fact became true, in ISO 8601 format. */
+  validAt: string;
+  /** The time the fact stopped being true, or null while it is current. */
+  invalidAt: string | null;
+}
+
+/** One memory node with its facts. */
+export interface MemoryNodeDto {
+  /** The stable identifier of the node. */
+  id: string;
+  /** The key that names the node, for example `user`. */
+  key: string;
+  /** The name the memory shows. */
+  title: string;
+  /** The body of the concept in plain text. */
+  body: string;
+  /** The relations of the node, current first. */
+  facts: MemoryFactDto[];
+  /** The time the daemon stored the node, in ISO 8601 format. */
+  createdAt: string;
+  /** The time the daemon last changed the node, in ISO 8601 format. */
+  updatedAt: string;
+}
+
+/** The body of a memory query. */
+export interface MemoryQueryRequestDto {
+  /** The words to search the memory for. Empty returns the recent nodes. */
+  text: string;
+  /** The largest number of nodes to return. */
+  limit?: number;
+}
+
+/** The reply of a memory query. */
+export interface MemoryQueryDto {
+  /** The nodes the query matched, best first. */
+  nodes: MemoryNodeDto[];
+}
+
+/** One relation a write gives to a node. */
+export interface MemoryFactWriteDto {
+  /** The relation the fact names. */
+  relation: string;
+  /** The value the fact carries. */
+  value: string;
+}
+
+/** The body of a memory write. */
+export interface MemoryWriteRequestDto {
+  /** The key that names the node. An existing key is enriched. */
+  key: string;
+  /** The name the memory shows. */
+  title: string;
+  /** The body of the concept. */
+  body: string;
+  /** The relations to write. */
+  facts: MemoryFactWriteDto[];
+}
+
+/** The body of a memory merge. */
+export interface MemoryMergeRequestDto {
+  /** The concept that absorbs the other. */
+  into: string;
+}
+
+/** The report of the memory linter. */
+export interface LibrarianLintDto {
+  /** Nodes two keys name, so the memory holds one thing twice. */
+  duplicates: MemoryNodeDto[];
+  /** Nodes that no relation reaches, so nothing links to them. */
+  orphans: MemoryNodeDto[];
+  /** Relations a newer relation replaced. They stay readable. */
+  closed: MemoryFactDto[];
 }
 
 /** One GLiNER model the daemon can download. */
@@ -569,7 +822,7 @@ export interface LocalModelDto {
   name: string;
   /** One sentence about the model. */
   note: string;
-  /** What the model reads: `embeddings` or `reranker`. */
+  /** What the model reads: `embeddings`, `reranker`, or `decision`. */
   role: string;
   /** The size of the download in bytes. */
   sizeBytes: number;
@@ -749,6 +1002,8 @@ export interface RouterStatusDto {
   embedLocalModel: string;
   /** The identifier of the built in reranker. */
   rerankModel: string;
+  /** The identifier of the built in decision model. */
+  layaModel: string;
   /** The device a built in model of the router should run on. */
   localDevice: LocalDevice;
   /** The device a built in model of the router would run on now. */
@@ -778,5 +1033,211 @@ export interface ResolverStatusDto {
   /** How many labels the intent configuration adds up to. */
   budget: LabelBudgetDto;
   /** The state of the layered router. */
+  router: RouterStatusDto;
+}
+
+/** Operating system of the host. */
+export interface SystemOsDto {
+  /** Name of the operating system, for example `Ubuntu`. */
+  name: string | null;
+  /** Version of the operating system. */
+  version: string | null;
+  /** Processor architecture, for example `x86_64`. */
+  arch: string;
+  /** Kernel version. */
+  kernelVersion: string | null;
+  /** Host name. */
+  hostname: string | null;
+}
+
+/** One logical processor of the host. */
+export interface SystemCpuCoreDto {
+  /** Name of the core, for example `cpu0`. */
+  name: string;
+  /** Brand of the core, for example `Intel(R) Core(TM) i7`. */
+  brand: string;
+  /** Vendor of the core. */
+  vendor: string;
+  /** Frequency of the core in MHz. */
+  frequencyMhz: number;
+  /** Usage of the core in percent between 0 and 100. */
+  usagePercent: number;
+}
+
+/** Processor summary of the host. */
+export interface SystemCpuDto {
+  /** Brand of the processor. */
+  brand: string;
+  /** Vendor identifier. */
+  vendor: string;
+  /** Number of physical cores, or null when the host does not report it. */
+  physicalCores: number | null;
+  /** Number of logical cores. */
+  logicalCores: number;
+  /** Frequency of the processor in MHz. */
+  frequencyMhz: number;
+  /** Average usage of the processor in percent between 0 and 100. */
+  usagePercent: number;
+  /** Every logical core. */
+  cores: SystemCpuCoreDto[];
+}
+
+/** Memory summary of the host. */
+export interface SystemMemoryDto {
+  /** Total RAM in bytes. */
+  totalBytes: number;
+  /** Available RAM in bytes. */
+  availableBytes: number;
+  /** Used RAM in bytes. */
+  usedBytes: number;
+  /** Total swap in bytes. */
+  totalSwapBytes: number;
+  /** Used swap in bytes. */
+  usedSwapBytes: number;
+}
+
+/** One disk of the host. */
+export interface SystemDiskDto {
+  /** Name of the disk, for example `/dev/sda1`. */
+  name: string;
+  /** Mount point of the disk. */
+  mountPoint: string;
+  /** File system of the disk, for example `ext4`. */
+  fileSystem: string;
+  /** Total space of the disk in bytes. */
+  totalBytes: number;
+  /** Available space of the disk in bytes. */
+  availableBytes: number;
+  /** Whether the disk is removable. */
+  isRemovable: boolean;
+}
+
+/** Devices the daemon can use for built in models. */
+export interface SystemDevicesDto {
+  /** Whether this build carries CUDA support. */
+  cudaBuild: boolean;
+  /** Whether ONNX Runtime can use a CUDA device right now. */
+  cudaAvailable: boolean;
+  /** Devices this build and this machine offer, best first. */
+  availableDevices: string[];
+  /** The device the selected GLiNER model would run on now. */
+  activeDevice: string;
+  /** The device the router models would run on now. */
+  activeLocalDevice: string;
+  /** Number of GLiNER models on disk. */
+  glinerModelsInstalled: number;
+  /** Number of router models on disk. */
+  routerModelsInstalled: number;
+  /**
+   * The graphics devices the daemon can reach, best first. The memory of a
+   * device decides which built in model fits on it.
+   */
+  gpus: SystemGpuDto[];
+}
+
+/** One graphics device of the host. */
+export interface SystemGpuDto {
+  /** The name of the device, as the machine reports it. */
+  name: string;
+  /** The maker of the device: `nvidia`, `amd`, or `intel`. */
+  vendor: string;
+  /**
+   * True when the device has no memory of its own and draws on the memory
+   * of the system, which is what an integrated device does.
+   */
+  sharedMemory: boolean;
+  /** The memory of the device in bytes, or null when it is not reported. */
+  memoryTotalBytes: number | null;
+  /** The memory in use in bytes, or null. */
+  memoryUsedBytes: number | null;
+  /** The memory free in bytes, or null. */
+  memoryFreeBytes: number | null;
+  /** The version of the driver, or null when the machine does not name one. */
+  driverVersion: string | null;
+}
+
+/** Resolver state of the host. */
+export interface SystemResolverDto {
+  /** Whether the llama.cpp server answers. */
+  llamaReachable: boolean;
+  /** Why the llama server does not answer, or null. */
+  llamaDetail: string | null;
+  /** Whether the embedding server answers. */
+  embeddingsReachable: boolean;
+  /** Why the embedding server does not answer, or null. */
+  embeddingsDetail: string | null;
+  /** Whether the selected GLiNER model is on disk. */
+  glinerInstalled: boolean;
+  /** Whether the selected embedding model is on disk. */
+  localEmbeddingInstalled: boolean;
+  /** Whether the selected reranker is on disk. */
+  localRerankerInstalled: boolean;
+  /** Number of configured intents. */
+  intentCount: number;
+  /** Number of labels a GLiNER model reads for this configuration. */
+  labelCount: number;
+}
+
+/** One preset that maps a quality value to a router configuration. */
+export interface RouterPresetDto {
+  /** Quality between 0 and 100. 0 is fastest, 100 is best. */
+  quality: number;
+  /** Speed between 0 and 100. Always 100 - quality. */
+  speed: number;
+  /** Short label of the preset, for example `Balanced`. */
+  label: string;
+  /** One sentence about the preset. */
+  description: string;
+  /** Router configuration of the preset. */
+  router: RouterStatusDto;
+}
+
+/** Recommendation for this host. */
+export interface SystemRecommendationDto {
+  /** Recommended quality between 0 and 100. */
+  quality: number;
+  /** Recommended speed between 0 and 100. Always 100 - quality. */
+  speed: number;
+  /** Why this recommendation fits the host. */
+  reason: string;
+  /** Factors that shaped the recommendation. */
+  factors: string[];
+  /** Router configuration of the recommended preset. */
+  router: RouterStatusDto;
+}
+
+/** Full system profile of the host. */
+export interface SystemProfileDto {
+  /** Operating system. */
+  os: SystemOsDto;
+  /** Processor. */
+  cpu: SystemCpuDto;
+  /** Memory. */
+  memory: SystemMemoryDto;
+  /** Disks. */
+  disks: SystemDiskDto[];
+  /** Devices the daemon can use. */
+  devices: SystemDevicesDto;
+  /** Resolver state. */
+  resolver: SystemResolverDto;
+  /** Recommended preset for this host. */
+  recommendation: SystemRecommendationDto;
+  /** Every preset from fastest to best, with the recommended one marked. */
+  presets: RouterPresetDto[];
+}
+
+/** Body of `POST /api/v1/system/preset`. */
+export interface SystemPresetRequestDto {
+  /** Quality between 0 and 100. 0 is fastest, 100 is best. */
+  quality: number;
+}
+
+/** Reply of `POST /api/v1/system/preset`. */
+export interface SystemPresetDto {
+  /** Quality between 0 and 100. */
+  quality: number;
+  /** Speed between 0 and 100. Always 100 - quality. */
+  speed: number;
+  /** Router configuration of the preset. */
   router: RouterStatusDto;
 }

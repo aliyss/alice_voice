@@ -5,9 +5,11 @@
  * voice of the user carries the accent. The turn of the daemon sits at the
  * left edge on plain glass, so the two are never confused.
  *
- * The header line keeps the name and the time. How long the turn took waits
- * in a tooltip on the time, so the line stays quiet and a reader still
- * reaches the one number that is worth a glance. Everything else the daemon
+ * The header line keeps the name and the time, and the mark of the memory
+ * stands beside the time of the message the memory learned from. The mark
+ * is a check, and the facts the turn taught wait in its tooltip, so a
+ * reader sees that the daemon kept something and what it kept without
+ * leaving the transcript. Everything else the daemon
  * knows about the turn waits behind the `Metadata` toggle of the turn, in
  * one row per field: the label in the HUD hand, the value in the text hand,
  * and a hairline between the rows so the table is easy to read down.
@@ -21,24 +23,43 @@
  * sentence of the stage under it. A reader therefore sees which stage
  * answered a message and which stage refused it, instead of the stage
  * that happened to answer alone.
+ *
+ * The route of the turn reads in two ways, and the switch of the row picks
+ * between them: one line per stage, or the field by field report the
+ * settings page shows for a sentence it tried. The switch belongs to the
+ * transcript, so every turn of it reads a route the same way.
  */
+import type { QRL } from '@builder.io/qwik';
+
 import type { ChatRow } from '~/utils/chat';
 
-import { component$ } from '@builder.io/qwik';
+import { $, component$ } from '@builder.io/qwik';
 
 import { Badge } from '~/components/ui/badge';
+import { ContentSwitcher } from '~/components/ui/content-switcher';
 import { Disclosure } from '~/components/ui/disclosure';
+import { InfoHint } from '~/components/ui/info-hint';
 import { MetadataRow } from '~/components/ui/metadata-row';
 import { Stack } from '~/components/ui/stack';
 import { Text } from '~/components/ui/text';
 import { Tooltip } from '~/components/ui/tooltip';
+import { RouteLog } from '~/components/viz/route-log';
 
 import { joinClassNames } from '~/utils/class-names';
+import {
+  ROUTE_LOG_MODES,
+  ROUTE_LOG_MODE_HINT,
+  debugRoute,
+} from '~/utils/preview-log';
 
 /** The props of `ChatMessagePartial`. */
 export interface ChatMessagePartialProps {
   /** The turn to render. */
   row: ChatRow;
+  /** True when the route of the turn reads field by field. */
+  debug: boolean;
+  /** Report the reading the user chose for the route. */
+  onDebug$: QRL<(next: boolean) => void>;
 }
 
 export const ChatMessagePartial = component$<ChatMessagePartialProps>(
@@ -56,6 +77,7 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
     const candidates = meta?.candidates ?? [];
     const route = meta?.route ?? [];
     const reason = meta?.reason ?? null;
+    const resolve = meta?.resolve ?? null;
     const hasDetail = Boolean(
       meta &&
         (intent ||
@@ -63,8 +85,10 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
           stage ||
           candidates.length > 0 ||
           entities.length > 0 ||
+          meta.memorySeed ||
           route.length > 0 ||
           reason ||
+          resolve ||
           meta.command ||
           meta.exitCode),
     );
@@ -99,11 +123,26 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
             <Text size="micro" tone={isUser ? 'accent' : 'muted'}>
               {isUser ? 'You' : 'Alice'}
             </Text>
-            <Tooltip text={meta?.duration ?? null} class="shrink-0">
-              <Text size="micro" tone="faint">
-                {props.row.clock}
-              </Text>
-            </Tooltip>
+            <Stack direction="row" gap="xs" align="center" class="shrink-0">
+              {/* The memory reads a turn after the daemon answered it, so
+                  the mark appears on the message the memory learned from
+                  once it has read it. */}
+              {props.row.memory ? (
+                <Tooltip
+                  text={props.row.memory.facts.join('\n')}
+                  ariaLabel="Saved to the memory"
+                >
+                  <Text size="hud" tone="ok">
+                    ✓
+                  </Text>
+                </Tooltip>
+              ) : null}
+              <Tooltip text={meta?.duration ?? null} class="shrink-0">
+                <Text size="micro" tone="faint">
+                  {props.row.clock}
+                </Text>
+              </Tooltip>
+            </Stack>
           </Stack>
 
           <Text size="body" block class="whitespace-pre-wrap">
@@ -183,6 +222,26 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
                     </Stack>
                   </MetadataRow>
                 ) : null}
+                {meta.memorySeed ? (
+                  <MetadataRow
+                    label="Memory"
+                    labelWidth="w-20"
+                    align="start"
+                    class="py-1.5"
+                  >
+                    {/* What the daemon read from the long term memory
+                        before it answered, so a reader sees the facts the
+                        answer leaned on rather than only its words. */}
+                    <Text
+                      size="hud"
+                      tone="muted"
+                      block
+                      class="whitespace-pre-line"
+                    >
+                      {meta.memorySeed}
+                    </Text>
+                  </MetadataRow>
+                ) : null}
                 {route.length > 0 ? (
                   <MetadataRow
                     label="Route"
@@ -194,18 +253,40 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
                         them: which stage answered a message and which one
                         refused it is what the route is for. */}
                     <Stack gap="xs" class="w-full">
-                      {route.map((step) => (
-                        <Stack key={step.stage} gap="none" class="w-full">
-                          <Text size="hud" tone="default" block>
-                            {`${step.stage}  ${step.reader}  ${step.outcome}  ${step.duration}`}
-                          </Text>
-                          {step.detail ? (
-                            <Text size="hud" tone="faint" block>
-                              {step.detail}
+                      <Stack direction="row" gap="xs" align="center">
+                        <ContentSwitcher
+                          ariaLabel="How to read the route"
+                          value={props.debug ? 'debug' : 'text'}
+                          options={ROUTE_LOG_MODES}
+                          size="sm"
+                          onPick$={$((next: string) =>
+                            props.onDebug$(next === 'debug'),
+                          )}
+                        />
+                        <InfoHint
+                          label="The two readings of a route"
+                          text={ROUTE_LOG_MODE_HINT}
+                          side="top"
+                          align="left"
+                        />
+                      </Stack>
+
+                      {props.debug ? (
+                        <RouteLog blocks={debugRoute(props.row.source)} />
+                      ) : (
+                        route.map((step) => (
+                          <Stack key={step.stage} gap="none" class="w-full">
+                            <Text size="hud" tone="default" block>
+                              {`${step.stage}  ${step.reader}  ${step.outcome}  ${step.duration}`}
                             </Text>
-                          ) : null}
-                        </Stack>
-                      ))}
+                            {step.detail ? (
+                              <Text size="hud" tone="faint" block>
+                                {step.detail}
+                              </Text>
+                            ) : null}
+                          </Stack>
+                        ))
+                      )}
                     </Stack>
                   </MetadataRow>
                 ) : null}
@@ -218,6 +299,15 @@ export const ChatMessagePartial = component$<ChatMessagePartialProps>(
                   >
                     <Text size="hud" tone="muted" block>
                       {reason}
+                    </Text>
+                  </MetadataRow>
+                ) : null}
+                {resolve ? (
+                  <MetadataRow label="Read" labelWidth="w-20" class="py-1.5">
+                    {/* The read runs from the queued message to the command,
+                        so a slow turn is told apart from a slow command. */}
+                    <Text size="hud" tone="muted">
+                      {resolve}
                     </Text>
                   </MetadataRow>
                 ) : null}

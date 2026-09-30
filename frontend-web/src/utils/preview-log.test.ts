@@ -7,7 +7,7 @@ import type {
 
 import { describe, expect, it } from 'vitest';
 
-import { debugPreview, readPreview } from '~/utils/preview-log';
+import { debugPreview, debugRoute, readPreview } from '~/utils/preview-log';
 
 /** Build one step of a route. */
 function step(
@@ -57,6 +57,9 @@ function meta(options: Partial<MessageMetaDto> = {}): MessageMetaDto {
     command: null,
     exitCode: null,
     durationMs: 12,
+    scriptId: null,
+    memorySeed: null,
+    resolveMs: null,
     ...options,
   };
 }
@@ -334,5 +337,39 @@ describe('debugPreview', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].title).toBe('The answer');
     expect(blocks[0].fields).toHaveLength(1);
+  });
+});
+
+describe('debugRoute', () => {
+  it('reads one part per stage of the route', () => {
+    const blocks = debugRoute(
+      meta({
+        route: {
+          stage: 'retrieve',
+          matched: false,
+          reason: 'below the floor',
+          steps: [
+            step('retrieve', { reader: 'dense', durationMs: 9 }),
+            step('decide', { outcome: 'refused', reader: 'model' }),
+          ],
+        },
+      }),
+    );
+
+    expect(blocks.map((block) => block.title)).toEqual([
+      'ranking of the catalog',
+      'decision',
+    ]);
+    expect(blocks[1].tone).toBe('error');
+    expect(blocks[1].fields).toContainEqual({
+      label: 'The time it took',
+      value: '2 ms',
+      hint: expect.any(String),
+    });
+  });
+
+  it('reads no part of a turn without a route', () => {
+    expect(debugRoute(null)).toEqual([]);
+    expect(debugRoute(meta())).toEqual([]);
   });
 });

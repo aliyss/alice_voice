@@ -35,6 +35,11 @@ const NOTE_MIN_ROOM = 64;
 export interface TooltipProps {
   /** The value to show. An empty value shows no panel. */
   text: string | null;
+  /**
+   * The label for a screen reader. It names what the value explains, for a
+   * trigger that carries no words of its own.
+   */
+  ariaLabel?: string;
   /** The side the panel opens to. It defaults to above the content. */
   side?: TooltipSide;
   /** The edge the panel hangs from. It defaults to the right edge. */
@@ -77,6 +82,7 @@ export const Tooltip = component$<TooltipProps>((props) => {
   return (
     <span
       ref={mark}
+      aria-label={props.ariaLabel}
       class={joinClassNames('relative inline-flex', props.class)}
       tabIndex={0}
       onMouseEnter$={show$}

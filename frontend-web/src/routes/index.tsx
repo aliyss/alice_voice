@@ -21,7 +21,8 @@ import { ChatPage } from '~/components/pages/chat-page';
 
 import { backendGet } from '~/lib/backend-client';
 
-import { sendMessage } from '~/api/chat';
+import { getConversation, sendMessage } from '~/api/chat';
+import { approveScript, denyScript, getScript } from '~/api/scripts';
 
 /** The path of the conversation list. The list is ordered, so one item is the latest. */
 const LATEST_CONVERSATION_PATH = '/api/v1/conversations?limit=1';
@@ -57,12 +58,20 @@ export const useChatSurface = routeLoader$(
 export default component$(() => {
   const surface = useChatSurface();
   const handleSend = $((input: SendMessageInput) => sendMessage(input));
+  const handleReadScript = $((id: string) => getScript(id));
+  const handleApproveScript = $((id: string) => approveScript(id));
+  const handleDenyScript = $((id: string) => denyScript(id));
+  const handleReloadConversation = $((id: string) => getConversation(id));
 
   return (
     <ChatPage
       conversation={surface.value.conversation}
       messages={surface.value.messages}
       onSend$={handleSend}
+      onReadScript$={handleReadScript}
+      onApproveScript$={handleApproveScript}
+      onDenyScript$={handleDenyScript}
+      onReloadConversation$={handleReloadConversation}
     />
   );
 });

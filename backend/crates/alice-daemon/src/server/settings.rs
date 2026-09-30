@@ -97,6 +97,27 @@ pub async fn put_settings_handler(
         Some(sentences) => Some(validate_preview_sentences(sentences)?),
         None => None,
     };
+    let librarian_base_url = match &body.librarian_base_url {
+        Some(url) => Some(validate_base_url(url)?),
+        None => None,
+    };
+    let librarian_model = match &body.librarian_model {
+        Some(model) => Some(require_text(model, "The librarian model is empty.")?),
+        None => None,
+    };
+    let response_quality = match body.response_quality {
+        Some(quality) => Some(validate_quality(quality)?),
+        None => None,
+    };
+    let response_speed = match body.response_speed {
+        Some(speed) => Some(validate_speed(speed)?),
+        None => None,
+    };
+    if let (Some(quality), Some(speed)) = (response_quality, response_speed) {
+        if speed != 100 - quality {
+            return Err(bad_request("Response speed must be 100 - quality."));
+        }
+    }
 
     // 2. Write what the caller sent
     let settings = &state.stores.settings;
@@ -169,8 +190,52 @@ pub async fn put_settings_handler(
                 )
             })?;
     }
+    // The quality of the sliders and the stages of the flow are two views
+    // of one router. A write that carries the stages writes them as they
+    // came, so a reader the user picked survives the save; a write that
+    // carries the quality alone is a move of a slider, and the stages are
+    // the lerp of that quality. Rebuilding the stages on every write would
+    // drop a stage the user picked, because the quality the page sent back
+    // is the quality the stages were moved from.
+    if let Some(quality) = response_quality {
+        settings
+            .set_response_quality(quality)
+            .await
+            .map_err(|err| {
+                database_failed(
+                    err,
+                    "settings write",
+                    "The daemon could not save the settings.",
+                )
+            })?;
+    }
+    if let Some(speed) = response_speed {
+        settings.set_response_speed(speed).await.map_err(|err| {
+            database_failed(
+                err,
+                "settings write",
+                "The daemon could not save the settings.",
+            )
+        })?;
+    }
     if let Some(router) = router {
         settings.set_router(&router).await.map_err(|err| {
+            database_failed(
+                err,
+                "settings write",
+                "The daemon could not save the settings.",
+            )
+        })?;
+    } else if let Some(quality) = response_quality.or(response_speed.map(|speed| 100 - speed)) {
+        let current_router = settings.get_router().await.map_err(|err| {
+            database_failed(
+                err,
+                "settings read",
+                "The daemon could not read the settings.",
+            )
+        })?;
+        let preset = crate::system::preset::quality_to_router(quality, &current_router);
+        settings.set_router(&preset).await.map_err(|err| {
             database_failed(
                 err,
                 "settings write",
@@ -189,6 +254,36 @@ pub async fn put_settings_handler(
                     "The daemon could not save the settings.",
                 )
             })?;
+    }
+    if let Some(enabled) = body.librarian_enabled {
+        settings
+            .set_librarian_enabled(enabled)
+            .await
+            .map_err(|err| {
+                database_failed(
+                    err,
+                    "settings write",
+                    "The daemon could not save the settings.",
+                )
+            })?;
+    }
+    if let Some(url) = librarian_base_url {
+        settings.set_librarian_base_url(&url).await.map_err(|err| {
+            database_failed(
+                err,
+                "settings write",
+                "The daemon could not save the settings.",
+            )
+        })?;
+    }
+    if let Some(model) = librarian_model {
+        settings.set_librarian_model(&model).await.map_err(|err| {
+            database_failed(
+                err,
+                "settings write",
+                "The daemon could not save the settings.",
+            )
+        })?;
     }
 
     // 3. Return the stored settings
@@ -231,11 +326,20 @@ fn to_dto(values: SettingsValues) -> SettingsDto {
         router_embed_source: values.router.embed_source.as_str().to_string(),
         router_embed_local_model: values.router.embed_local_model,
         router_rerank_model: values.router.rerank_model,
+        router_laya_model: values.router.laya_model,
         router_local_device: values.router.local_device.as_str().to_string(),
         router_phrase_gate: values.router.phrase_gate,
         router_list_match: values.router.list_match.as_str().to_string(),
         router_list_floor: values.router.list_floor,
+        router_fallback_llm: values.router.fallback_llm,
+        router_script_fallback: values.router.script_fallback,
+        router_open_values_llm: values.router.open_values_llm,
+        response_quality: values.response_quality,
+        response_speed: values.response_speed,
         preview_sentences: values.preview_sentences,
+        librarian_enabled: values.librarian_enabled,
+        librarian_base_url: values.librarian_base_url,
+        librarian_model: values.librarian_model,
     }
 }
 
@@ -323,6 +427,9 @@ fn validate_router(
     if let Some(value) = &body.router_rerank_model {
         router.rerank_model = validate_local_model(value, local_catalog::Role::Reranker)?;
     }
+    if let Some(value) = &body.router_laya_model {
+        router.laya_model = validate_local_model(value, local_catalog::Role::Decision)?;
+    }
     if let Some(value) = &body.router_local_device {
         router.local_device = validate_device(value)?;
     }
@@ -334,6 +441,15 @@ fn validate_router(
     }
     if let Some(value) = body.router_list_floor {
         router.list_floor = read_unit(value, "The list floor")?;
+    }
+    if let Some(value) = body.router_fallback_llm {
+        router.fallback_llm = value;
+    }
+    if let Some(value) = body.router_script_fallback {
+        router.script_fallback = value;
+    }
+    if let Some(value) = body.router_open_values_llm {
+        router.open_values_llm = value;
     }
 
     // A configuration the daemon cannot run is a configuration it must
@@ -381,8 +497,9 @@ fn read_decide(value: &str) -> Result<DecideEngine, RestError> {
         "score" => Ok(DecideEngine::Score),
         "rerank" => Ok(DecideEngine::Rerank),
         "generative" => Ok(DecideEngine::Generative),
+        "laya" => Ok(DecideEngine::Laya),
         _ => Err(bad_request(
-            "The decision stage must decide by the scores, by the built in reranker, or by a model.",
+            "The decision stage must decide by the scores, by the built in reranker, by the built in decision model, or by a model.",
         )),
     }
 }
@@ -392,9 +509,10 @@ fn read_extract(value: &str) -> Result<ExtractEngine, RestError> {
     match value.trim().to_lowercase().as_str() {
         "lists" => Ok(ExtractEngine::Lists),
         "spans" => Ok(ExtractEngine::Spans),
+        "laya" => Ok(ExtractEngine::Laya),
         "generative" => Ok(ExtractEngine::Generative),
         _ => Err(bad_request(
-            "The extraction stage must read the lists, the spans, or a model.",
+            "The extraction stage must read the lists, the spans, the built in decision model, or a model.",
         )),
     }
 }
@@ -446,7 +564,10 @@ fn validate_device(value: &str) -> Result<LocalDevice, RestError> {
         "auto" => Ok(LocalDevice::Auto),
         "cpu" => Ok(LocalDevice::Cpu),
         "cuda" => Ok(LocalDevice::Cuda),
-        _ => Err(bad_request("The GLiNER device must be auto, cpu, or cuda.")),
+        "gpu" | "openvino" => Ok(LocalDevice::Gpu),
+        _ => Err(bad_request(
+            "The GLiNER device must be auto, cpu, cuda, or gpu.",
+        )),
     }
 }
 
@@ -484,6 +605,22 @@ fn validate_local_model(value: &str, role: local_catalog::Role) -> Result<String
 fn validate_threshold(value: f32) -> Result<f32, RestError> {
     if !(0.0..=1.0).contains(&value) {
         return Err(bad_request("The GLiNER threshold must be between 0 and 1."));
+    }
+    Ok(value)
+}
+
+/// Read the response quality out of a settings write.
+fn validate_quality(value: u8) -> Result<u8, RestError> {
+    if value > 100 {
+        return Err(bad_request("Response quality must be between 0 and 100."));
+    }
+    Ok(value)
+}
+
+/// Read the response speed out of a settings write.
+fn validate_speed(value: u8) -> Result<u8, RestError> {
+    if value > 100 {
+        return Err(bad_request("Response speed must be between 0 and 100."));
     }
     Ok(value)
 }
@@ -550,6 +687,8 @@ mod tests {
         assert_eq!(validate_device(" auto ").ok(), Some(LocalDevice::Auto));
         assert_eq!(validate_device("cpu").ok(), Some(LocalDevice::Cpu));
         assert_eq!(validate_device("CUDA").ok(), Some(LocalDevice::Cuda));
+        assert_eq!(validate_device("gpu").ok(), Some(LocalDevice::Gpu));
+        assert_eq!(validate_device("openvino").ok(), Some(LocalDevice::Gpu));
         assert!(validate_device("tpu").is_err());
     }
 
@@ -611,5 +750,33 @@ mod tests {
         assert_eq!(validate_threshold(0.3).ok(), Some(0.3));
         assert!(validate_threshold(-0.1).is_err());
         assert!(validate_threshold(1.2).is_err());
+    }
+
+    #[test]
+    fn read_decide_reads_every_engine_including_the_built_in_decision_model() {
+        assert_eq!(read_decide("score").ok(), Some(DecideEngine::Score));
+        assert_eq!(read_decide(" Rerank ").ok(), Some(DecideEngine::Rerank));
+        assert_eq!(
+            read_decide("GENERATIVE").ok(),
+            Some(DecideEngine::Generative)
+        );
+        assert_eq!(read_decide(" laya ").ok(), Some(DecideEngine::Laya));
+        assert!(read_decide("magic").is_err());
+    }
+
+    #[test]
+    fn a_decision_model_is_only_stored_for_the_decision_role() {
+        assert_eq!(
+            validate_local_model("laya", local_catalog::Role::Decision).ok(),
+            Some("laya".to_string())
+        );
+        assert!(
+            validate_local_model("laya", local_catalog::Role::Reranker).is_err(),
+            "the decision model is not a reranker"
+        );
+        assert!(
+            validate_local_model("ms-marco-MiniLM-L-6-v2", local_catalog::Role::Decision).is_err(),
+            "the reranker is not a decision model"
+        );
     }
 }

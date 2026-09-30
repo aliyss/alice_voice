@@ -93,6 +93,21 @@ export interface PreviewReading {
   command: string | null;
 }
 
+/** The two ways to read the log of one route, in the order the switch shows them. */
+export const ROUTE_LOG_MODES: { value: 'text' | 'debug'; label: string }[] = [
+  { value: 'text', label: 'Text' },
+  { value: 'debug', label: 'Debug' },
+];
+
+/**
+ * The note of the switch between the two readings of a route.
+ *
+ * The settings page and the chat surface show the same words, so a reader
+ * learns the two readings once.
+ */
+export const ROUTE_LOG_MODE_HINT =
+  'Text reads the answer of the daemon in the words of a user. Debug names every value the daemon reported, field by field, so a user sees which stage read what and how long it took.';
+
 /** What the settings page calls a turn that left the resolver without one. */
 const NO_INTENT = 'I could not match that to an intent.';
 
@@ -311,6 +326,29 @@ export function readPreview(preview: ResolverPreviewDto): PreviewReading {
  * left out, so a refusal carries no command and a turn that read no value
  * carries no values.
  */
+/**
+ * Read the stages of the route of one turn as the parts of the log.
+ *
+ * The chat surface reads the route of a stored turn with this, so a reader
+ * who turns the debug reading on sees the same field by field report the
+ * settings page shows for the sentence it tried: one part per stage, with
+ * the reader that ran and the time it took.
+ */
+export function debugRoute(meta: MessageMetaDto | null): PreviewBlock[] {
+  return (meta?.route?.steps ?? []).map((step) =>
+    stepBlock(step, formatRouteStep(step).stage),
+  );
+}
+
+/**
+ * Read one preview as a technical log, part by part.
+ *
+ * The parts follow the way a turn runs: the answer of the whole turn, then
+ * every stage of the route with the readers it ran, then the values it
+ * read, then the command it would run. A part the turn never reached is
+ * left out, so a refusal carries no command and a turn that read no value
+ * carries no values.
+ */
 export function debugPreview(preview: ResolverPreviewDto): PreviewBlock[] {
   const meta: MessageMetaDto | null = preview.meta;
   const blocks: PreviewBlock[] = [];
@@ -399,9 +437,7 @@ export function debugPreview(preview: ResolverPreviewDto): PreviewBlock[] {
     tone: answerTone,
   });
 
-  for (const step of meta?.route?.steps ?? []) {
-    blocks.push(stepBlock(step, formatRouteStep(step).stage));
-  }
+  blocks.push(...debugRoute(meta));
 
   if ((meta?.entities ?? []).length > 0) {
     for (const entity of meta?.entities ?? []) {

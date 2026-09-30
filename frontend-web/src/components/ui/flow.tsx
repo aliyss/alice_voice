@@ -143,6 +143,28 @@ const DRAG_PX = 4;
 /** What a block stands for. */
 export type FlowNodeKind = 'stage' | 'place' | 'exit';
 
+/**
+ * What a link carries.
+ *
+ * The two channels are drawn in two colors, because they mean two
+ * different things: `flow` is the turn itself, the message that moves from
+ * one stage to the next, and `setting` is the configuration of a stage,
+ * which points at the place that reads it. A reader tells the shape of a
+ * turn from the wiring of the settings by the color of the line alone.
+ */
+export type FlowChannel = 'flow' | 'setting';
+
+/**
+ * The side of a block a link leaves or reaches.
+ *
+ * An input sits on the left or the top and an output on the right or the
+ * bottom, so the direction of a connection reads from where it touches a
+ * block and not from the arrow alone. A link between two columns runs
+ * right to left and a link inside one column runs bottom to top, which is
+ * the two cases the layout really draws.
+ */
+export type FlowSide = 'left' | 'right' | 'top' | 'bottom';
+
 /** One block of the graph. */
 export interface FlowNodeSpec {
   /** A stable id. The links name it. */
@@ -161,6 +183,33 @@ export interface FlowNodeSpec {
   row: number;
   /** The position of the block in the chain, for a stage. */
   stage?: number;
+  /**
+   * The connection points of the block.
+   *
+   * A point the caller does not give is read from the links of the graph:
+   * a link that leaves a block makes an output of its channel and a link
+   * that reaches one makes an input. A caller therefore declares the
+   * points a block may accept rather than the ones it uses, and a point
+   * with no link yet is still drawn, which is where a reader starts a
+   * connection to it.
+   */
+  ports?: FlowPortSpec[];
+  /**
+   * Whether a link may be drawn from an output point of the block.
+   *
+   * A block that does not set it starts no connection, so only the blocks
+   * the caller names take a press and the rest keep their points as marks.
+   * It decides nothing unless the caller also gives `onConnect$`.
+   */
+  dragFrom?: boolean;
+}
+
+/** One connection point of a block. */
+export interface FlowPortSpec {
+  /** The channel the point carries. */
+  channel: FlowChannel;
+  /** The side of the block the point sits on. */
+  side: FlowSide;
 }
 
 /** One link of the graph. */
@@ -175,10 +224,10 @@ export interface FlowEdgeSpec {
   label?: string;
   /**
    * The look of the link. A main link is the chain the message follows, a
-   * branch link is a reader the block above reads or a turn that leaves
-   * the chain.
+   * branch link is a turn that leaves the chain, and a setting link is the
+   * place a stage reads.
    */
-  kind?: 'main' | 'branch';
+  kind?: 'main' | 'branch' | 'setting';
 }
 
 /** How a block of a route reads: it answered, it stumbled, or it failed. */
@@ -227,6 +276,14 @@ export interface FlowGraphProps {
   ariaLabel: string;
   /** Report the block a reader picked. */
   onSelect$?: QRL<(id: string) => void>;
+  /**
+   * Report a connection the reader drew from one block to another.
+   *
+   * The caller decides what a connection means and whether it is allowed:
+   * the graph reports the two ids and draws nothing of its own. A caller
+   * that gives no handler draws no connection points to grab.
+   */
+  onConnect$?: QRL<(from: string, to: string) => void>;
 }
 
 /** The grid one graph lays out on. */
@@ -293,6 +350,11 @@ interface FlowGesture {
   originY: number;
   /** Whether the press travelled far enough to count as a drag. */
   dragging: boolean;
+  /** The block a connection is being drawn from, or null. */
+  connectFrom: string | null;
+  /** The graph point the connection starts at. */
+  connectX: number;
+  connectY: number;
   /** Whether the press moved the graph, so its click is not a pick. */
   swallowed: boolean;
 }
@@ -653,6 +715,209 @@ const TONE_COLORS: Record<FlowTone, string> = {
   error: 'text-ds-error',
 };
 
+/**
+ * The color of one channel a link carries.
+ *
+ * The turn takes the neutral line and the settings take the accent, so the
+ * two read apart at a glance and neither one borrows the color the tones
+ * of a route use for answered, stumbled, and failed.
+ */
+const CHANNEL_COLORS: Record<FlowChannel, string> = {
+  flow: 'text-ds-line-strong',
+  setting: 'text-ds-accent',
+};
+
+/** The color of the point of one channel. */
+const PORT_COLORS: Record<FlowChannel, string> = {
+  flow: 'bg-ds-line-strong',
+  setting: 'bg-ds-accent',
+};
+
+/** The dashes of one channel, so the color is not the only difference. */
+const CHANNEL_DASHES: Record<FlowChannel, string | undefined> = {
+  flow: undefined,
+  setting: '2 3',
+};
+
+/** Read the channel of one link. */
+function channelOf(edge: FlowEdgeSpec): FlowChannel {
+  return edge.kind === 'setting' ? 'setting' : 'flow';
+}
+
+/**
+ * Read the connection points of one block.
+ *
+ * A caller that declares the points gets the ones it declared, so a block
+ * shows the connection it may accept before that connection exists. A
+ * caller that declares none gets the points its links already use, so the
+ * graph needs no second description of what it draws.
+ */
+function portsOf(
+  node: FlowNodeSpec,
+  nodes: FlowNodeSpec[],
+  edges: FlowEdgeSpec[],
+): FlowPortSpec[] {
+  if (node.ports && node.ports.length > 0) {
+    return node.ports;
+  }
+  const used: FlowPortSpec[] = [];
+  for (const edge of edges) {
+    const from = nodes.find((other) => other.id === edge.from);
+    const to = nodes.find((other) => other.id === edge.to);
+    if (!from || !to) {
+      continue;
+    }
+    const sides = sidesOf(from, to);
+    if (edge.from === node.id) {
+      used.push({ channel: channelOf(edge), side: sides.out });
+    }
+    if (edge.to === node.id) {
+      used.push({ channel: channelOf(edge), side: sides.in });
+    }
+  }
+  return used.filter(
+    (port, index) =>
+      used.findIndex(
+        (other) => other.channel === port.channel && other.side === port.side,
+      ) === index,
+  );
+}
+
+/**
+ * Read the two sides of one link.
+ *
+ * This mirrors the layout: a link that stays inside a column runs down it,
+ * so it leaves the bottom of a block and reaches the top of the next one,
+ * and a link that crosses the columns runs sideways.
+ */
+function sidesOf(
+  from: FlowNodeSpec,
+  to: FlowNodeSpec,
+): {
+  out: FlowSide;
+  in: FlowSide;
+} {
+  if (from.column === to.column) {
+    return { out: 'bottom', in: 'top' };
+  }
+  return from.column < to.column
+    ? { out: 'right', in: 'left' }
+    : { out: 'left', in: 'right' };
+}
+
+/**
+ * Place the point of one block along the side it sits on.
+ *
+ * Two points of the same side spread along the side rather than stack on
+ * one another, so a stage that reads a setting and takes a turn at once
+ * shows both of them.
+ */
+function portOffset(
+  port: FlowPortSpec,
+  node: FlowNodeSpec,
+  nodes: FlowNodeSpec[],
+  edges: FlowEdgeSpec[],
+): string {
+  const side = portsOf(node, nodes, edges).filter(
+    (other) => other.side === port.side,
+  );
+  const at = side.findIndex((other) => other.channel === port.channel);
+  return `${((at + 1) / (side.length + 1)) * 100}%`;
+}
+
+/** The placement of the point of one channel on one side of a block. */
+function portPlacement(
+  port: FlowPortSpec,
+  node: FlowNodeSpec,
+  nodes: FlowNodeSpec[],
+  edges: FlowEdgeSpec[],
+): { className: string; style: Record<string, string> } {
+  const at = portOffset(port, node, nodes, edges);
+  switch (port.side) {
+    case 'left':
+      return { className: 'left-0 -translate-x-1/2', style: { top: at } };
+    case 'right':
+      return { className: 'right-0 translate-x-1/2', style: { top: at } };
+    case 'top':
+      return { className: 'top-0 -translate-y-1/2', style: { left: at } };
+    case 'bottom':
+      return { className: 'bottom-0 translate-y-1/2', style: { left: at } };
+    default:
+      return { className: '', style: {} };
+  }
+}
+
+/**
+ * Read one browser point as a point of the graph.
+ *
+ * The graph is drawn through one transform, so a point of the frame has to
+ * have the pan taken off it and the zoom divided out before it means
+ * anything to the layout. The room is the box of the frame on the screen.
+ */
+function toGraph(
+  clientX: number,
+  clientY: number,
+  room: DOMRect | undefined,
+  offset: FlowOffset,
+  scale: number,
+): { x: number; y: number } {
+  if (!room) {
+    return { x: 0, y: 0 };
+  }
+  return {
+    x: (clientX - room.left - offset.x) / scale,
+    y: (clientY - room.top - offset.y) / scale,
+  };
+}
+
+/** The block under one point of the graph, or null. */
+function nodeAt(
+  point: { x: number; y: number },
+  nodes: FlowNodeSpec[],
+  layout: FlowLayout,
+): FlowNodeSpec | null {
+  for (const node of nodes) {
+    const at = place(node, layout);
+    const room = heightIn(node, layout);
+    if (
+      point.x >= at.left &&
+      point.x <= at.left + NODE_W &&
+      point.y >= at.top &&
+      point.y <= at.top + room
+    ) {
+      return node;
+    }
+  }
+  return null;
+}
+
+/** The graph point of one connection point of one block. */
+function portPoint(
+  node: FlowNodeSpec,
+  port: FlowPortSpec,
+  nodes: FlowNodeSpec[],
+  edges: FlowEdgeSpec[],
+  layout: FlowLayout,
+): { x: number; y: number } {
+  const at = place(node, layout);
+  const room = heightIn(node, layout);
+  const side = portsOf(node, nodes, edges).filter(
+    (other) => other.side === port.side,
+  );
+  const at_ = side.findIndex((other) => other.channel === port.channel);
+  const along = (at_ + 1) / (side.length + 1);
+  switch (port.side) {
+    case 'right':
+      return { x: at.left + NODE_W, y: at.top + room * along };
+    case 'left':
+      return { x: at.left, y: at.top + room * along };
+    case 'top':
+      return { x: at.left + NODE_W * along, y: at.top };
+    default:
+      return { x: at.left + NODE_W * along, y: at.top + room };
+  }
+}
+
 /** The suffix the id of the value of a link carries. */
 const LABEL_SUFFIX = '-label';
 
@@ -889,7 +1154,12 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
     originY: 0,
     dragging: false,
     swallowed: false,
+    connectFrom: null,
+    connectX: 0,
+    connectY: 0,
   });
+  // The point the connection under the pointer reaches, in graph units.
+  const connectPoint = useSignal<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const graphView = { width: layout.width, height: layout.height };
 
@@ -948,6 +1218,32 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
     fit();
   });
 
+  /** Start drawing a connection from one block. */
+  const handlePortDown$ = $(
+    (event: PointerEvent, node: FlowNodeSpec, port: FlowPortSpec) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+      }
+      // The press belongs to the connection and not to the pan of the graph.
+      event.stopPropagation();
+      const start = portPoint(node, port, props.nodes, props.edges, layout);
+      gesture.connectFrom = node.id;
+      gesture.connectX = start.x;
+      gesture.connectY = start.y;
+      connectPoint.value = toGraph(
+        event.clientX,
+        event.clientY,
+        frame.value?.getBoundingClientRect(),
+        offset.value,
+        scale.value,
+      );
+      gesture.pointerId = event.pointerId;
+      gesture.dragging = false;
+      gesture.swallowed = true;
+      frame.value?.setPointerCapture(event.pointerId);
+    },
+  );
+
   const handlePointerDown$ = $((event: PointerEvent) => {
     if (event.pointerType === 'mouse' && event.button !== 0) {
       return;
@@ -964,6 +1260,17 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
 
   const handlePointerMove$ = $((event: PointerEvent) => {
     if (gesture.pointerId !== event.pointerId) {
+      return;
+    }
+    // A connection under the pointer follows the pointer and never pans.
+    if (gesture.connectFrom) {
+      connectPoint.value = toGraph(
+        event.clientX,
+        event.clientY,
+        frame.value?.getBoundingClientRect(),
+        offset.value,
+        scale.value,
+      );
       return;
     }
     const dx = event.clientX - gesture.x;
@@ -989,6 +1296,30 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
 
   const handlePointerUp$ = $((event: PointerEvent) => {
     if (gesture.pointerId !== event.pointerId) {
+      return;
+    }
+    if (gesture.connectFrom) {
+      const from = gesture.connectFrom;
+      const to = nodeAt(
+        toGraph(
+          event.clientX,
+          event.clientY,
+          frame.value?.getBoundingClientRect(),
+          offset.value,
+          scale.value,
+        ),
+        props.nodes,
+        layout,
+      );
+      gesture.connectFrom = null;
+      gesture.pointerId = null;
+      gesture.dragging = false;
+      grabbing.value = false;
+      // A connection onto the block it starts at says nothing, and the
+      // caller decides whether the two ends may be joined at all.
+      if (to && to.id !== from) {
+        void props.onConnect$?.(from, to.id);
+      }
       return;
     }
     if (gesture.dragging) {
@@ -1029,18 +1360,9 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
     };
     element.addEventListener('wheel', handleWheel, { passive: false });
 
-    // The first view fits the whole graph, and a frame that changes its
-    // size fits again until the reader takes the view by hand.
-    const observer = new ResizeObserver(() => {
-      if (!held.value) {
-        void fit();
-      }
-    });
-    observer.observe(element);
-
+    // Wheel zoom only - height is pure CSS min-h-[600px] with no observer.
     cleanup(() => {
       element.removeEventListener('wheel', handleWheel);
-      observer.disconnect();
     });
   });
 
@@ -1055,7 +1377,7 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
       onPointerCancel$={handlePointerUp$}
       class={joinClassNames(
         'relative w-full touch-none overflow-hidden select-none',
-        props.fill ? 'min-h-0 flex-1' : null,
+        props.fill ? 'flex-1 min-h-0' : null,
         grabbing.value ? 'cursor-grabbing' : 'cursor-grab',
       )}
       style={props.fill ? undefined : { height: `${layout.height}px` }}
@@ -1098,12 +1420,15 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
                 class={joinClassNames(
                   // A link of the route takes the color of the block it
                   // leads into, so the way the message went reads along the
-                  // link as well as on the blocks at its two ends.
+                  // link as well as on the blocks at its two ends. A link
+                  // outside the route takes the color of its channel, so a
+                  // reader tells the turn from the wiring of the settings
+                  // before any route is read at all.
                   tone
                     ? TONE_COLORS[tone]
                     : edge.kind === 'branch'
                       ? 'text-ds-text-faint'
-                      : 'text-ds-line-strong',
+                      : CHANNEL_COLORS[channelOf(edge)],
                   routed && !routed.has(edge.id) ? 'opacity-25' : null,
                 )}
               >
@@ -1112,12 +1437,28 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
                   fill="none"
                   stroke="currentColor"
                   stroke-width={tone ? 1.5 : 1}
-                  stroke-dasharray={edge.kind === 'branch' ? '3 3' : undefined}
+                  stroke-dasharray={
+                    edge.kind === 'branch'
+                      ? '3 3'
+                      : CHANNEL_DASHES[channelOf(edge)]
+                  }
                   marker-end={`url(#${props.id}-arrow)`}
                 />
               </g>
             );
           })}
+
+          {gesture.connectFrom ? (
+            <path
+              d={`M ${gesture.connectX} ${gesture.connectY} L ${connectPoint.value.x} ${connectPoint.value.y}`}
+              fill="none"
+              stroke="currentColor"
+              stroke-width={1.5}
+              stroke-dasharray="4 3"
+              class={CHANNEL_COLORS.setting}
+              marker-end={`url(#${props.id}-arrow)`}
+            />
+          ) : null}
         </svg>
 
         {placed.map((entry) => (
@@ -1212,6 +1553,49 @@ export const FlowGraph = component$<FlowGraphProps>((props) => {
                   {node.detail}
                 </Text>
               ) : null}
+
+              {/* The connection points of the block. An input sits on the
+                  left edge and an output on the right edge, which is where
+                  the links of the graph already leave and reach it, and the
+                  points of one edge spread along it rather than stacking on
+                  one another. */}
+              {portsOf(node, props.nodes, props.edges).map((port) => {
+                const point = portPlacement(
+                  port,
+                  node,
+                  props.nodes,
+                  props.edges,
+                );
+                // A point a connection may be drawn from takes the press,
+                // and a point a link reaches is a mark only. The header
+                // decides which one a point is: an output carries a
+                // connection onward and an input receives one.
+                const output = port.side === 'right' || port.side === 'bottom';
+                const grab =
+                  props.onConnect$ !== undefined &&
+                  output &&
+                  node.dragFrom === true;
+                return (
+                  <span
+                    key={`${port.side}-${port.channel}`}
+                    aria-hidden
+                    onPointerDown$={
+                      grab
+                        ? $((event: PointerEvent) =>
+                            handlePortDown$(event, node, port),
+                          )
+                        : undefined
+                    }
+                    class={joinClassNames(
+                      'absolute rounded-full',
+                      PORT_COLORS[port.channel],
+                      grab ? 'size-2.5 cursor-crosshair' : 'size-1.5',
+                      point.className,
+                    )}
+                    style={point.style}
+                  />
+                );
+              })}
             </button>
           );
         })}

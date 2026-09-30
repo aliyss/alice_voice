@@ -27,6 +27,12 @@ export const sendMessageSchema = v.object({
       v.regex(CONVERSATION_ID_PATTERN, 'The conversation is not valid.'),
     ),
   ),
+  /**
+   * Whether the daemon reads the earlier turns as the context of this
+   * message. It defaults to true, so a follow-up whose meaning depends on
+   * the turn before it is read in the conversation it belongs to.
+   */
+  context: v.optional(v.boolean(), true),
 });
 
 /** The input of the send message function. */

@@ -77,6 +77,7 @@ pub async fn preview_message_handler(
         &ResolveRequest {
             text: text.clone(),
             history: Vec::new(),
+            memory_seed: String::new(),
         },
     )
     .await;
@@ -234,7 +235,7 @@ pub async fn read_status(state: &AppState) -> Result<ResolverStatusDto, RestErro
     let warning = match settings.resolver_backend {
         ResolverBackend::Router => match settings.router.extract {
             ExtractEngine::Spans => gliner_label_warning(labels),
-            ExtractEngine::Lists | ExtractEngine::Generative => None,
+            ExtractEngine::Lists | ExtractEngine::Laya | ExtractEngine::Generative => None,
         },
         ResolverBackend::Llama | ResolverBackend::Gliner | ResolverBackend::Hybrid => {
             gliner_label_warning(labels)
@@ -300,6 +301,7 @@ pub async fn read_status(state: &AppState) -> Result<ResolverStatusDto, RestErro
             embed_source: settings.router.embed_source.as_str().to_string(),
             embed_local_model: settings.router.embed_local_model.clone(),
             rerank_model: settings.router.rerank_model.clone(),
+            laya_model: settings.router.laya_model.clone(),
             local_device: settings.router.local_device.as_str().to_string(),
             active_local_device,
             local: LocalStoreDto {

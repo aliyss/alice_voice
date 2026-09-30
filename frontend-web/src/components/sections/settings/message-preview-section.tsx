@@ -38,9 +38,16 @@ import { InfoHint } from '~/components/ui/info-hint';
 import { Stack } from '~/components/ui/stack';
 import { Text } from '~/components/ui/text';
 import { TextInput } from '~/components/ui/text-input';
+import { RouteLog } from '~/components/viz/route-log';
 
 import { joinClassNames } from '~/utils/class-names';
-import { debugPreview, readPreview } from '~/utils/preview-log';
+import { ROUTE_DEBUG_PREFERENCE, useStoredFlag } from '~/utils/preference';
+import {
+  ROUTE_LOG_MODES,
+  ROUTE_LOG_MODE_HINT,
+  debugPreview,
+  readPreview,
+} from '~/utils/preview-log';
 
 /** The props of `MessagePreviewSection`. */
 export interface MessagePreviewSectionProps {
@@ -69,19 +76,6 @@ interface SentenceState {
   message: string | null;
 }
 
-/** How the panel reads the log of one sentence. */
-type LogMode = 'text' | 'debug';
-
-/** The two ways to read a log, in the order the switch shows them. */
-const LOG_MODES: { value: LogMode; label: string }[] = [
-  { value: 'text', label: 'Text' },
-  { value: 'debug', label: 'Debug' },
-];
-
-/** The note of the switch between the two readings of a log. */
-const LOG_MODE_HINT =
-  'Text reads the answer of the daemon in the words of a user. Debug names every value the daemon reported, field by field, so a user sees which stage read what and how long it took.';
-
 /** The state of a sentence the panel never read. */
 function unread(): SentenceState {
   return { reading: false, result: null, message: null };
@@ -99,8 +93,12 @@ export const MessagePreviewSection = component$<MessagePreviewSectionProps>(
     const shown = useSignal<string | null>(null);
     /** What the panel knows about each sentence, by the sentence. */
     const states = useSignal<Record<string, SentenceState>>({});
-    /** How the panel reads the log of the shown sentence. */
-    const mode = useSignal<LogMode>('text');
+    /**
+     * How the panel reads the log of the shown sentence. The reading is a
+     * preference of the user, so the chat surface reads the route of a
+     * stored turn the same way.
+     */
+    const debug = useStoredFlag(ROUTE_DEBUG_PREFERENCE, false);
     /** The place of the sentence the user edits, or null. */
     const editing = useSignal<number | null>(null);
     /** The text of the sentence while the user edits it. */
@@ -477,16 +475,16 @@ export const MessagePreviewSection = component$<MessagePreviewSectionProps>(
               <Stack direction="row" gap="xs" align="center">
                 <ContentSwitcher
                   ariaLabel="How to read the log"
-                  value={mode.value}
-                  options={LOG_MODES}
+                  value={debug.value ? 'debug' : 'text'}
+                  options={ROUTE_LOG_MODES}
                   size="sm"
                   onPick$={$((next: string) => {
-                    mode.value = next as LogMode;
+                    debug.value = next === 'debug';
                   })}
                 />
                 <InfoHint
                   label="The two readings of a log"
-                  text={LOG_MODE_HINT}
+                  text={ROUTE_LOG_MODE_HINT}
                   side="top"
                   align="right"
                 />
@@ -511,7 +509,7 @@ export const MessagePreviewSection = component$<MessagePreviewSectionProps>(
                 Play this sentence to read the route it takes.
               </Text>
             ) : null}{' '}
-            {reading && mode.value === 'text' ? (
+            {reading && !debug.value ? (
               <Stack gap="sm">
                 <Stack
                   direction="row"
@@ -578,63 +576,7 @@ export const MessagePreviewSection = component$<MessagePreviewSectionProps>(
                 ) : null}
               </Stack>
             ) : null}
-            {reading && mode.value === 'debug' ? (
-              <Stack gap="sm">
-                {blocks.map((block, position) => (
-                  <Stack key={`${block.title}-${position}`} gap="xs">
-                    <Stack direction="row" gap="xs" align="center">
-                      <Text size="hud" mono tone={block.tone ?? 'muted'}>
-                        {block.title}
-                      </Text>
-                      <InfoHint
-                        label={`About ${block.title}`}
-                        text={block.hint}
-                        side="top"
-                        align="left"
-                      />
-                    </Stack>
-                    <Stack gap="none">
-                      {block.fields.map((field, at) => (
-                        <Stack
-                          key={`${field.label}-${at}`}
-                          direction="row"
-                          gap="sm"
-                          align="start"
-                          justify="between"
-                          class="border-t border-ds-line py-1 first:border-t-0"
-                        >
-                          <Stack
-                            direction="row"
-                            gap="xs"
-                            align="center"
-                            class="shrink-0"
-                          >
-                            <Text size="hud" tone="faint">
-                              {field.label}
-                            </Text>
-                            <InfoHint
-                              label={`About ${field.label}`}
-                              text={field.hint}
-                              side="top"
-                              align="left"
-                            />
-                          </Stack>
-                          <Text
-                            size="hud"
-                            mono
-                            tone={field.tone ?? 'default'}
-                            block
-                            class="min-w-0 flex-1 text-right break-all"
-                          >
-                            {field.value}
-                          </Text>
-                        </Stack>
-                      ))}
-                    </Stack>
-                  </Stack>
-                ))}
-              </Stack>
-            ) : null}
+            {reading && debug.value ? <RouteLog blocks={blocks} /> : null}
           </Stack>
         ) : null}
       </Stack>

@@ -174,7 +174,9 @@ config file to load.
 | `ALICE_EXECUTION_ENABLED` | `true` | Whether the command of an intent runs |
 | `ALICE_EXECUTION_TIMEOUT_SECS` | `20` | How long a command may run |
 | `ALICE_ENTITY_SCRIPT_*` | `3`, `60`, `200` | The timeout, the cache, and the largest list of a script entity |
-| `ALICE_ROUTER_*` | see the graph | The layered router: `FAST_PATH`, `RETRIEVE`, `DECIDE`, `EXTRACT`, `TOP_K`, `FLOOR`, `MARGIN`, the two weights, the embedding source and models, `LOCAL_DEVICE`, `PHRASE_GATE`, `LIST_MATCH`, and `LIST_FLOOR` |
+| `ALICE_ROUTER_*` | see the graph | The layered router: `FAST_PATH`, `RETRIEVE`, `DECIDE`, `EXTRACT`, `TOP_K`, `FLOOR`, `MARGIN`, the two weights, the embedding source and models, `RERANK_MODEL`, `LAYA_MODEL` (the built in decision model of `decide = laya`), `LOCAL_DEVICE`, `PHRASE_GATE`, `LIST_MATCH`, and `LIST_FLOOR` |
+| `ALICE_CATALOG_*` | `true`, `true`, `900`, `40`, `0` | The command catalog of the script fallback: `ENABLED`, `RANK`, `TTL_SECS`, `LIMIT` (commands in one prompt), and `MAX_ENTRIES` (largest catalog, zero for every command) |
+| `ALICE_LIBRARIAN_*` | `true`, `http://127.0.0.1:8012/v1`, `qwen3.5-4b`, `60`, `768`, `12`, `30` | The long term memory of the daemon: `ENABLED`, `BASE_URL`, `MODEL`, `TIMEOUT_SECS`, `MAX_TOKENS`, `CONTEXT_NODES` (concepts in the seed of a turn), and `EPISODE_RETENTION_DAYS` (days the words of a read turn are kept, zero to keep them). Only a turn that matches no intent reads the memory and only such a turn teaches it. The settings page overrides the first three |
 | `RUST_LOG` | `info` | The log filter. `tracing_subscriber` syntax, so per module is allowed |
 | `PUBLIC_ALICE_API_URL` | `http://127.0.0.1:8788` in `frontend-web/.env` | The web app's daemon. Read at build time |
 | `ALICE_GLINER_CUDA` | set by `shell.nix` | Whether the shell makes CUDA possible |
@@ -268,6 +270,24 @@ curl http://127.0.0.1:8788/api/v1/conversations
 curl http://127.0.0.1:8788/api/v1/conversations/<id>
 #   -> the full history, with the metadata of every turn: the engine, the
 #      model, the route, and the reader behind every value
+curl http://127.0.0.1:8788/api/v1/librarian
+#   -> the state of the long term memory: whether it is on, whether the
+#      model answers, and how many concepts it holds, how many of its facts
+#      are true now, how many a later turn taught again, and how many
+#      episodes wait for the reader
+curl 'http://127.0.0.1:8788/api/v1/librarian/memories?text=user'
+#   -> the concepts the words name, best named first, with the rating of
+#      every fact: how sure the reader was of it, how much it is worth,
+#      how often a later turn taught it again, and when the memory last
+#      saw it
+curl http://127.0.0.1:8788/api/v1/librarian/lint
+#   -> the concepts two keys name, the concepts nothing links to, and the
+#      facts a newer fact replaced
+curl -X POST http://127.0.0.1:8788/api/v1/librarian/memories/<id>/merge \
+  -H 'content-type: application/json' -d '{"into":"<other>"}'
+#   -> the concept in the path moves into the one the body names: its facts
+#      move, its key becomes a name of the target, and a relation the two
+#      share settles by the newer value
 ```
 
 Read one sentence the way a turn reads it, without running anything:

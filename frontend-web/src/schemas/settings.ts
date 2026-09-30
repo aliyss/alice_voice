@@ -20,7 +20,12 @@ export const resolverBackendsSchema = v.picklist([
 ] as const);
 
 /** The devices a built in model can run on. */
-export const glinerDevicesSchema = v.picklist(['auto', 'cpu', 'cuda'] as const);
+export const glinerDevicesSchema = v.picklist([
+  'auto',
+  'cpu',
+  'cuda',
+  'gpu',
+] as const);
 
 /** Where the router reads the vectors of the catalog. */
 export const embedSourcesSchema = v.picklist(['server', 'local'] as const);
@@ -37,12 +42,14 @@ export const decideEnginesSchema = v.picklist([
   'score',
   'rerank',
   'generative',
+  'laya',
 ] as const);
 
 /** How the extraction stage of the router reads the entity values. */
 export const extractEnginesSchema = v.picklist([
   'lists',
   'spans',
+  'laya',
   'generative',
 ] as const);
 
@@ -64,6 +71,14 @@ const probabilitySchema = (message: string) =>
 /** One weight of zero or more. */
 const weightSchema = (message: string) =>
   v.pipe(v.number(message), v.minValue(0, 'The weight is 0 or more.'));
+
+/** Response quality 0..100, 0 is fastest. */
+const qualitySchema = (message: string) =>
+  v.pipe(
+    v.number(message),
+    v.minValue(0, 'Quality is 0 or more.'),
+    v.maxValue(100, 'Quality is 100 or less.'),
+  );
 
 /** The stages of the layered router. */
 const routerSchema = {
@@ -101,12 +116,21 @@ const routerSchema = {
     v.string(),
     v.nonEmpty('Choose a built in reranker.'),
   ),
+  routerLayaModel: v.pipe(
+    v.string(),
+    v.nonEmpty('Choose a built in decision model.'),
+  ),
   routerLocalDevice: glinerDevicesSchema,
   routerPhraseGate: v.boolean(),
   routerListMatch: listMatchesSchema,
   routerListFloor: probabilitySchema(
     'Enter the smallest similarity a value needs.',
   ),
+  routerFallbackLlm: v.boolean(),
+  routerScriptFallback: v.boolean(),
+  routerOpenValuesLlm: v.boolean(),
+  responseQuality: qualitySchema('Enter the response quality.'),
+  responseSpeed: qualitySchema('Enter the response speed.'),
 };
 
 /** The address and the model of the intent resolver. */
@@ -132,6 +156,22 @@ export const resolverSettingsSchema = v.object({
     v.maxValue(1, 'The threshold is 1 or less.'),
   ),
   ...routerSchema,
+  /**
+   * The memory of the daemon.
+   *
+   * The values are set from the flow, with the values of the turn, so the
+   * form of the resolver validates them with the rest.
+   */
+  librarianEnabled: v.boolean(),
+  librarianBaseUrl: v.pipe(
+    v.string(),
+    v.nonEmpty('Enter the address of the librarian server.'),
+    v.url('Enter an address that starts with http://.'),
+  ),
+  librarianModel: v.pipe(
+    v.string(),
+    v.nonEmpty('Enter the model name the librarian answers to.'),
+  ),
 });
 
 /**
@@ -211,12 +251,20 @@ export const settingsSchema = v.object({
   routerRerankModel: v.optional(
     v.pipe(v.string(), v.nonEmpty('Choose a built in reranker.')),
   ),
+  routerLayaModel: v.optional(
+    v.pipe(v.string(), v.nonEmpty('Choose a built in decision model.')),
+  ),
   routerLocalDevice: v.optional(glinerDevicesSchema),
   routerPhraseGate: v.optional(v.boolean()),
   routerListMatch: v.optional(listMatchesSchema),
   routerListFloor: v.optional(
     probabilitySchema('Enter the smallest similarity a value needs.'),
   ),
+  routerFallbackLlm: v.optional(v.boolean()),
+  routerScriptFallback: v.optional(v.boolean()),
+  routerOpenValuesLlm: v.optional(v.boolean()),
+  responseQuality: v.optional(qualitySchema('Enter the response quality.')),
+  responseSpeed: v.optional(qualitySchema('Enter the response speed.')),
   /**
    * The sentences the user tries against the resolver. They are a list the
    * page writes on its own, so they never travel with the resolver form.
@@ -225,6 +273,20 @@ export const settingsSchema = v.object({
     v.pipe(
       v.array(v.string()),
       v.maxLength(32, 'Keep the list at 32 sentences or fewer.'),
+    ),
+  ),
+  librarianEnabled: v.optional(v.boolean()),
+  librarianBaseUrl: v.optional(
+    v.pipe(
+      v.string(),
+      v.nonEmpty('Enter the address of the librarian server.'),
+      v.url('Enter an address that starts with http://.'),
+    ),
+  ),
+  librarianModel: v.optional(
+    v.pipe(
+      v.string(),
+      v.nonEmpty('Enter the model name the librarian answers to.'),
     ),
   ),
 });

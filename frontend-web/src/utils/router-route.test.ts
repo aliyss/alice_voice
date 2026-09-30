@@ -12,9 +12,10 @@ import { routeHighlight } from '~/utils/router-route';
 /** The places the tests can light up. */
 const PLACES = {
   vectors: 'server',
-  reranker: 'builtin',
+  builtin: 'builtin',
   model: 'server',
   spans: 'gliner',
+  memory: 'memory',
 };
 
 /** Build one step of a route. */
@@ -67,7 +68,10 @@ function route(
       route,
       command: null,
       exitCode: null,
+      resolveMs: null,
       durationMs: null,
+      scriptId: null,
+      memorySeed: null,
     },
   };
 }
@@ -170,6 +174,37 @@ describe('routeHighlight', () => {
     // The graph draws the exit off the decision stage, and this turn
     // never reached it, so no link carries it out.
     expect(highlight?.edges).not.toContain('decision-refused');
+  });
+
+  it('reads the memory into the branch of a refusal', () => {
+    const highlight = routeHighlight(
+      route(
+        [
+          step('fast_path', 'rules'),
+          step('retrieve', 'lexical'),
+          step('decide', 'scores', 'refused'),
+        ],
+        { matched: false },
+      ),
+      PLACES,
+    );
+
+    expect(highlight?.nodes).toContain('memory');
+    expect(highlight?.edges).toContain('refused-memory');
+    expect(highlight?.route.nodes.memory).toBe('ok');
+  });
+
+  it('leaves the memory dark when the daemon keeps none', () => {
+    const highlight = routeHighlight(
+      route(
+        [step('fast_path', 'rules'), step('retrieve', 'lexical', 'refused')],
+        { matched: false },
+      ),
+      { ...PLACES, memory: null },
+    );
+
+    expect(highlight?.nodes).not.toContain('memory');
+    expect(highlight?.edges).not.toContain('refused-memory');
   });
 
   it('leaves the chain through the decision when the decision refused', () => {

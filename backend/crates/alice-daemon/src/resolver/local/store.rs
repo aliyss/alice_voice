@@ -250,10 +250,11 @@ mod tests {
         let (store, root) = store();
         assert!(!store.is_installed(&BGE_SMALL));
         let list = store.list();
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 3);
         assert!(list.iter().all(|model| !model.installed));
         assert_eq!(list[0].role, "embeddings");
         assert_eq!(list[1].role, "reranker");
+        assert_eq!(list[2].role, "decision");
         let _ = std::fs::remove_dir_all(root);
     }
 

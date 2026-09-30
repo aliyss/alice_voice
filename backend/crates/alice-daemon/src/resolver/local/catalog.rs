@@ -18,6 +18,9 @@ pub enum Role {
     Embedding,
     /// The model reads a message and a candidate together and scores the pair.
     Reranker,
+    /// The model reads a state and typed questions together and answers
+    /// with one permitted option and a probability for every option.
+    Decision,
 }
 
 impl Role {
@@ -26,6 +29,7 @@ impl Role {
         match self {
             Self::Embedding => "embeddings",
             Self::Reranker => "reranker",
+            Self::Decision => "decision",
         }
     }
 }
@@ -95,6 +99,46 @@ const FILES_BGE_SMALL: &[ModelFile] = &[TOKENIZER, GRAPH_BGE_SMALL];
 /// The files of the reranker.
 const FILES_RERANKER: &[ModelFile] = &[TOKENIZER, GRAPH_RERANKER];
 
+/// The graph of the decision model.
+const GRAPH_LAYA: ModelFile = ModelFile {
+    path: "laya.onnx",
+    size_bytes: 3_807_291,
+};
+
+/// The weights of the decision model, beside the graph.
+const WEIGHTS_LAYA: ModelFile = ModelFile {
+    path: "laya.onnx.data",
+    size_bytes: 1_685_258_240,
+};
+
+/// The calibration of the decision model: the context lengths and the
+/// temperature of every answer shape.
+const CONFIG_LAYA: ModelFile = ModelFile {
+    path: "laya_config.json",
+    size_bytes: 369,
+};
+
+/// The tokenizer of the decision model.
+const TOKENIZER_LAYA: ModelFile = ModelFile {
+    path: "tokenizer/tokenizer.json",
+    size_bytes: 3_583_228,
+};
+
+/// The settings of the tokenizer of the decision model.
+const TOKENIZER_CONFIG_LAYA: ModelFile = ModelFile {
+    path: "tokenizer/tokenizer_config.json",
+    size_bytes: 308,
+};
+
+/// The files of the decision model.
+const FILES_LAYA: &[ModelFile] = &[
+    GRAPH_LAYA,
+    WEIGHTS_LAYA,
+    CONFIG_LAYA,
+    TOKENIZER_LAYA,
+    TOKENIZER_CONFIG_LAYA,
+];
+
 /// The embedding model, and the default of the retrieval stage.
 pub const BGE_SMALL: ModelSpec = ModelSpec {
     id: "bge-small-en-v1.5",
@@ -115,8 +159,24 @@ pub const RERANKER: ModelSpec = ModelSpec {
     files: FILES_RERANKER,
 };
 
+/// The decision model, and the default of a decision stage that asks Laya.
+///
+/// The model answers a typed choice over a fixed set of options in one
+/// forward pass and never writes text, so the answer cannot drift from the
+/// options and the probability of the chosen one is a calibrated number.
+/// The bundle is an ONNX export of the Apache 2.0 checkpoint, with the
+/// English encoder, so the daemon needs no Python toolchain to read it.
+pub const LAYA: ModelSpec = ModelSpec {
+    id: "laya",
+    name: "Laya",
+    note: "Reads the short list and answers with one intent and a probability for each option. About 1.6 GB, and one decision costs a few tens of milliseconds on a processor.",
+    role: Role::Decision,
+    repo: "receptron/laya-onnx",
+    files: FILES_LAYA,
+};
+
 /// Every model the daemon can download, embeddings first.
-pub const CATALOG: &[ModelSpec] = &[BGE_SMALL, RERANKER];
+pub const CATALOG: &[ModelSpec] = &[BGE_SMALL, RERANKER, LAYA];
 
 /// Read one model out of the catalog.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
@@ -140,9 +200,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalog_holds_an_embedding_model_and_a_reranker() {
+    fn the_catalog_holds_an_embedding_model_a_reranker_and_a_decision_model() {
         let roles: Vec<Role> = CATALOG.iter().map(|spec| spec.role).collect();
-        assert_eq!(roles, vec![Role::Embedding, Role::Reranker]);
+        assert_eq!(roles, vec![Role::Embedding, Role::Reranker, Role::Decision]);
     }
 
     #[test]
@@ -159,13 +219,17 @@ mod tests {
         assert!(find_role("bge-small-en-v1.5", Role::Embedding).is_some());
         assert!(find_role("bge-small-en-v1.5", Role::Reranker).is_none());
         assert!(find_role("ms-marco-MiniLM-L-6-v2", Role::Reranker).is_some());
+        assert!(find_role("laya", Role::Decision).is_some());
+        assert!(find_role("laya", Role::Reranker).is_none());
     }
 
     #[test]
     fn a_model_carries_a_tokenizer_and_a_graph() {
         for spec in CATALOG {
             assert!(
-                spec.files.iter().any(|file| file.path == "tokenizer.json"),
+                spec.files
+                    .iter()
+                    .any(|file| file.path.ends_with("tokenizer.json")),
                 "{} has no tokenizer",
                 spec.id
             );

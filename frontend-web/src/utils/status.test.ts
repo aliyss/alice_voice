@@ -12,6 +12,7 @@ import {
   markLinkClosed,
   mergeSnapshot,
   outcomeForEvent,
+  stageDurations,
   stateForEvent,
   toAuraState,
   toEnergy,
@@ -42,8 +43,11 @@ function entity(overrides: Partial<MessageEntityDto> = {}): MessageEntityDto {
   };
 }
 
-function event(payload: SystemEventDto['payload']): SystemEventDto {
-  return { at: '2026-09-18T10:00:05.000Z', payload };
+function event(
+  payload: SystemEventDto['payload'],
+  at = '2026-09-18T10:00:05.000Z',
+): SystemEventDto {
+  return { at, payload };
 }
 
 /** The payload of a command that ran. */
@@ -56,6 +60,36 @@ function completed(intent: string): SystemEventDto['payload'] {
     output: 'done',
   };
 }
+
+describe('applyLiveEvent', () => {
+  it('marks the message the memory learned from', () => {
+    const next = applyLiveEvent(
+      createEmptyLiveTurn(),
+      event({
+        type: 'MemorySaved',
+        message_id: 'msg-1',
+        facts: [{ concept: 'Flurin', relation: 'lives_in', value: 'Zurich' }],
+      }),
+    );
+
+    expect(next.memory).toEqual({
+      messageId: 'msg-1',
+      facts: [{ concept: 'Flurin', relation: 'lives_in', value: 'Zurich' }],
+    });
+  });
+
+  it('leaves the daemon state alone when the memory has read a turn', () => {
+    expect(
+      stateForEvent(
+        event({
+          type: 'MemorySaved',
+          message_id: 'msg-1',
+          facts: [{ concept: 'Flurin', relation: 'lives_in', value: 'Zurich' }],
+        }),
+      ),
+    ).toBeNull();
+  });
+});
 
 describe('createInitialStatus', () => {
   it('starts with a closed link', () => {
@@ -173,10 +207,36 @@ describe('applyEvent', () => {
   });
 });
 
+describe('stageDurations', () => {
+  it('reads the time of a step as the gap to the next one', () => {
+    const stages = [
+      { stage: 'retrieve', detail: '', at: '2026-09-18T10:00:05.000Z' },
+      { stage: 'decide', detail: '', at: '2026-09-18T10:00:05.370Z' },
+      { stage: 'answer', detail: '', at: '2026-09-18T10:00:05.400Z' },
+    ];
+
+    // The last step has no next one, so it is measured down to now: it is
+    // the step the daemon is on and it grows while the turn runs.
+    expect(
+      stageDurations(stages, Date.parse('2026-09-18T10:00:15.400Z')),
+    ).toEqual([370, 30, 10000]);
+  });
+
+  it('reads no time out of a step it cannot place', () => {
+    const stages = [{ stage: 'retrieve', detail: '', at: 'no clock' }];
+    expect(stageDurations(stages, Date.now())).toEqual([0]);
+  });
+
+  it('reads no time out of a turn that has not started', () => {
+    expect(stageDurations([], Date.now())).toEqual([]);
+  });
+});
+
 describe('applyLiveEvent', () => {
   it('clears the stages when a message enters the queue', () => {
     const live = {
       thinking: 'old',
+      stages: [],
       intent: 'get weather',
       confidence: 0.9,
       intentEngine: 'llama' as const,
@@ -186,13 +246,21 @@ describe('applyLiveEvent', () => {
       entities: [entity()],
       command: 'echo hi',
       output: ['hi'],
+      script: null,
+      memory: null,
+      startedAt: null,
     };
     const next = applyLiveEvent(
       live,
       event({ type: 'MessageQueued', id: 'msg-1' }),
     );
 
-    expect(next).toEqual(createEmptyLiveTurn());
+    // The queued event starts the turn, so the clock of the live turn
+    // reads from the time of that event.
+    expect(next).toEqual({
+      ...createEmptyLiveTurn(),
+      startedAt: '2026-09-18T10:00:05.000Z',
+    });
   });
 
   it('appends the tokens the resolver read', () => {
@@ -206,6 +274,65 @@ describe('applyLiveEvent', () => {
     );
 
     expect(next.thinking).toBe('{"choice":"A"}');
+  });
+
+  it('keeps the steps of the turn in the order they started', () => {
+    const first = applyLiveEvent(
+      createEmptyLiveTurn(),
+      event(
+        {
+          type: 'IntentStage',
+          stage: 'retrieve',
+          detail: 'ranking every intent of the catalog against the message',
+        },
+        '2026-09-18T10:00:05.000Z',
+      ),
+    );
+    const next = applyLiveEvent(
+      first,
+      event(
+        {
+          type: 'IntentStage',
+          stage: 'decide',
+          detail: 'choosing among 3 intents by the scores of the ranking',
+        },
+        '2026-09-18T10:00:05.370Z',
+      ),
+    );
+
+    // The last step is the one the daemon is on, so the order the events
+    // arrived is the order the card reads, and the time each one started
+    // travels with it so the hover can name what every step cost.
+    expect(next.stages).toEqual([
+      {
+        stage: 'retrieve',
+        detail: 'ranking every intent of the catalog against the message',
+        at: '2026-09-18T10:00:05.000Z',
+      },
+      {
+        stage: 'decide',
+        detail: 'choosing among 3 intents by the scores of the ranking',
+        at: '2026-09-18T10:00:05.370Z',
+      },
+    ]);
+  });
+
+  it('drops the oldest step of a turn that runs long', () => {
+    let live = createEmptyLiveTurn();
+    for (let index = 0; index < 10; index += 1) {
+      live = applyLiveEvent(
+        live,
+        event({
+          type: 'IntentStage',
+          stage: 'extract',
+          detail: `step ${index}`,
+        }),
+      );
+    }
+
+    expect(live.stages).toHaveLength(8);
+    expect(live.stages[0].detail).toBe('step 2');
+    expect(live.stages.at(-1)?.detail).toBe('step 9');
   });
 
   it('keeps the name and the probability of the resolved intent', () => {
@@ -288,6 +415,50 @@ describe('applyLiveEvent', () => {
     );
 
     expect(next.output).toEqual(['one', 'two']);
+  });
+
+  it('keeps a script the model wrote for the user to decide about', () => {
+    const next = applyLiveEvent(
+      createEmptyLiveTurn(),
+      event({
+        type: 'ScriptProposed',
+        id: 'script-1',
+        summary: 'List the files',
+        script: 'ls -la',
+        destructiveness: 5,
+      }),
+    );
+
+    expect(next.script).toEqual({
+      id: 'script-1',
+      summary: 'List the files',
+      script: 'ls -la',
+      destructiveness: 5,
+    });
+  });
+
+  it('drops the script once the user decides', () => {
+    const proposed = applyLiveEvent(
+      createEmptyLiveTurn(),
+      event({
+        type: 'ScriptProposed',
+        id: 'script-1',
+        summary: 'List the files',
+        script: 'ls -la',
+        destructiveness: 5,
+      }),
+    );
+
+    expect(
+      applyLiveEvent(
+        proposed,
+        event({ type: 'ScriptApproved', id: 'script-1' }),
+      ).script,
+    ).toBeNull();
+    expect(
+      applyLiveEvent(proposed, event({ type: 'ScriptDenied', id: 'script-1' }))
+        .script,
+    ).toBeNull();
   });
 
   it('keeps the end of a long model answer', () => {

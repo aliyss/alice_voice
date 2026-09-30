@@ -13,6 +13,10 @@ use crate::server::intents::{
     create_examples_handler, create_intent_handler, delete_intent_handler, list_intents_handler,
     preview_script_handler, update_intent_handler,
 };
+use crate::server::librarian::{
+    delete_memory_handler, get_librarian_handler, lint_librarian_handler, list_memories_handler,
+    merge_memory_handler, query_memory_handler, retire_fact_handler, write_memory_handler,
+};
 use crate::server::resolver::{
     delete_gliner_model_handler, delete_local_model_handler, download_gliner_model_handler,
     download_local_model_handler, get_resolver_handler, preview_message_handler,
@@ -22,9 +26,11 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::server::openapi::openapi_yaml_handler;
 use crate::server::rest::{chat_handler, health_alias_handler, health_handler, status_handler};
+use crate::server::scripts::{approve_script_handler, deny_script_handler, get_script_handler};
 use crate::server::settings::{get_settings_handler, put_settings_handler};
 use crate::server::socket::events_handler;
 use crate::server::state::AppState;
+use crate::server::system::{get_system_handler, post_system_preset_handler};
 
 /// Build the API router with the shared state.
 pub fn build_router(state: AppState) -> Router {
@@ -60,6 +66,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/intents/examples", post(create_examples_handler))
         .route("/api/v1/chat", post(chat_handler))
+        .route("/api/v1/scripts/{id}", get(get_script_handler))
+        .route("/api/v1/scripts/{id}/approve", post(approve_script_handler))
+        .route("/api/v1/scripts/{id}/deny", post(deny_script_handler))
         .route("/api/v1/events", get(events_handler))
         .route("/api/v1/dependencies", get(get_dependencies_handler))
         .route("/api/v1/resolver", get(get_resolver_handler))
@@ -84,6 +93,24 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/settings",
             get(get_settings_handler).put(put_settings_handler),
         )
+        .route("/api/v1/librarian", get(get_librarian_handler))
+        .route(
+            "/api/v1/librarian/memories",
+            get(list_memories_handler).post(write_memory_handler),
+        )
+        .route(
+            "/api/v1/librarian/memories/{id}",
+            delete(delete_memory_handler),
+        )
+        .route(
+            "/api/v1/librarian/memories/{id}/merge",
+            post(merge_memory_handler),
+        )
+        .route("/api/v1/librarian/facts/{id}", delete(retire_fact_handler))
+        .route("/api/v1/librarian/query", post(query_memory_handler))
+        .route("/api/v1/librarian/lint", get(lint_librarian_handler))
+        .route("/api/v1/system", get(get_system_handler))
+        .route("/api/v1/system/preset", post(post_system_preset_handler))
         .layer(cors)
         .with_state(state)
 }

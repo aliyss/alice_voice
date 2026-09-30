@@ -59,9 +59,13 @@ pub struct AnswerRequest {
     pub system: String,
     /// The user message of the request.
     pub user: String,
-    /// The JSON schema the answer must follow.
-    pub answer_schema: Value,
-    /// The name of the schema in the request.
+    ///
+    /// The JSON schema the answer must follow, or null for an answer in
+    /// plain words. A request without a schema carries no response format,
+    /// so the server streams what the model writes instead of constraining
+    /// it to a report.
+    pub answer_schema: Option<Value>,
+    /// The name of the schema in the request. It is unused without one.
     pub schema_name: String,
     /// The largest answer the daemon reads.
     pub max_tokens: u32,
@@ -291,8 +295,13 @@ fn build_body(request: &DecisionRequest) -> Value {
 }
 
 /// Build the body of one answer request.
+///
+/// The response format is written only for a request that carries a
+/// schema. A request without one asks for a sentence, and constraining a
+/// sentence to JSON only makes the model wrap it in a report the daemon
+/// then has to unwrap.
 fn build_answer_body(request: &AnswerRequest) -> Value {
-    json!({
+    let mut body = json!({
         "model": request.model,
         "messages": [
             { "role": "system", "content": request.system },
@@ -302,15 +311,18 @@ fn build_answer_body(request: &AnswerRequest) -> Value {
         "max_tokens": request.max_tokens,
         "stream": true,
         "chat_template_kwargs": { "enable_thinking": request.thinking },
-        "response_format": {
+    });
+    if let Some(schema) = &request.answer_schema {
+        body["response_format"] = json!({
             "type": "json_schema",
             "json_schema": {
                 "name": request.schema_name,
                 "strict": true,
-                "schema": request.answer_schema
+                "schema": schema
             }
-        }
-    })
+        });
+    }
+    body
 }
 
 /// Read the streamed answer of the model.
@@ -516,6 +528,52 @@ mod tests {
         assert_eq!(
             body["response_format"]["json_schema"]["schema"]["properties"]["choice"]["enum"],
             json!(["A"])
+        );
+    }
+
+    /// Build one answer request for the tests.
+    fn answer_request(answer_schema: Option<Value>) -> AnswerRequest {
+        AnswerRequest {
+            base_url: "http://127.0.0.1:8012/v1".to_string(),
+            model: "qwen3.5-4b".to_string(),
+            system: "You are the voice assistant of one machine.".to_string(),
+            user: "user: hello".to_string(),
+            answer_schema,
+            schema_name: "fallback_words".to_string(),
+            max_tokens: 512,
+            thinking: false,
+            timeout: Duration::from_secs(30),
+        }
+    }
+
+    #[test]
+    fn an_answer_in_words_carries_no_response_format() {
+        let body = build_answer_body(&answer_request(None));
+
+        assert_eq!(body["model"], "qwen3.5-4b");
+        assert_eq!(body["messages"][1]["content"], "user: hello");
+        assert!(
+            body.get("response_format").is_none(),
+            "an answer in words is a sentence and not a report"
+        );
+    }
+
+    #[test]
+    fn a_report_still_carries_its_schema() {
+        let body = build_answer_body(&answer_request(Some(json!({
+            "type": "object",
+            "properties": { "script": { "type": "string" } },
+            "required": ["script"],
+            "additionalProperties": false
+        }))));
+
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "fallback_words"
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["required"],
+            json!(["script"])
         );
     }
 

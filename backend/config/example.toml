@@ -53,6 +53,34 @@ models_dir = "models/gliner"
 # Threads one inference may use.
 threads = 4
 
+[librarian]
+# The long term memory of the daemon. A turn that meets no intent writes
+# one episode and a background worker reads it with a model of its own, so
+# a memory write never slows a reply. Only that branch reads the memory
+# and only that branch teaches it. The settings page overrides these
+# values, so this is what a fresh database starts from.
+#
+# The librarian is off in nothing: it reads its own address and model, so
+# it may point at a larger model than the resolver runs without slowing
+# the resolver down.
+enabled = true
+# OpenAI compatible server the librarian reads. It may be the resolver
+# server or a second one that answers with a dedicated model.
+base_url = "http://127.0.0.1:8012/v1"
+model = "qwen3.5-4b"
+# Time one extraction may take. The write runs in the background, so this
+# is longer than the timeout of the resolver.
+timeout_secs = 60
+# Largest answer the librarian reads. The answer is a JSON list of facts.
+max_tokens = 768
+# Largest number of concepts the seed of a turn carries. The concepts the
+# turn is about come first, so this is how many of them a turn may see.
+context_nodes = 12
+# Days the words of a turn are kept after the worker read it. The memory
+# keeps the fact the turn taught and the message it came from; the words
+# themselves are the bulk of the store, so they expire. Zero keeps them.
+episode_retention_days = 30
+
 [execution]
 # Whether the daemon runs the shell command of a resolved intent.
 # The command runs through `sh -c` as the settings page wrote it.
